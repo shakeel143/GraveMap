@@ -1,258 +1,362 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GraveMap – Digital Cemetery Management</title>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>GraveMap – Digital Cemetery Management</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.16.0/dist/leaflet-geoman.css"/>
+<script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.16.0/dist/leaflet-geoman.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<link rel="stylesheet" href="css/style.css"/>
 
-  <!-- Fonts -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getDatabase, ref, set, get, push, remove, onValue, update }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
-  <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-  <!-- QRCode -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-
-  <!-- Firebase -->
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
-      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-    import { getDatabase, ref, set, get, push, remove, onValue, query, orderByChild }
-      from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+// ── REPLACE WITH YOUR FIREBASE CONFIG ──
 const firebaseConfig = {
-  apiKey: "AIzaSyDzaFYCBCiJ1ThCSRfxBNIbnQp0vyvuFD4",
-  authDomain: "gravemap143.firebaseapp.com",
-  databaseURL: "https://gravemap143-default-rtdb.firebaseio.com",
-  projectId: "gravemap143",
-  storageBucket: "gravemap143.firebasestorage.app",
-  messagingSenderId: "1018929725781",
-  appId: "1:1018929725781:web:a4268b71da2774384d2fdc",
-  measurementId: "G-RR9S5B0CZY"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT.appspot.com",
+  messagingSenderId: "YOUR_SENDER_ID",
+  appId: "YOUR_APP_ID"
 };
-    // ────────────────────────────────────────────────────────────────
+// ────────────────────────────────────────
 
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getDatabase(app);
-    const provider = new GoogleAuthProvider();
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getDatabase(app);
+const provider = new GoogleAuthProvider();
 
-    // Expose to global scope for non-module scripts
-    window.__firebase = { auth, db, provider, ref, set, get, push, remove, onValue, query, orderByChild, signInWithPopup, signOut, onAuthStateChanged };
+window.__fb = { auth, db, provider, ref, set, get, push, remove, onValue, update,
+  signInWithPopup, signOut, onAuthStateChanged };
 
-    onAuthStateChanged(auth, user => {
-      window.__currentUser = user || null;
-      document.dispatchEvent(new CustomEvent('authChanged', { detail: user }));
-    });
-  </script>
-
-  <link rel="stylesheet" href="css/style.css" />
+onAuthStateChanged(auth, user => {
+  window.__user = user || null;
+  document.dispatchEvent(new CustomEvent('authChanged', { detail: user }));
+});
+</script>
 </head>
 <body>
 
-<!-- ═══════════════════════════ SIDEBAR ═══════════════════════════ -->
-<aside class="sidebar" id="sidebar">
-  <div class="sidebar-brand">
-    <span class="brand-icon">⬡</span>
-    <span class="brand-name">GraveMap</span>
+<!-- ═══ TOPBAR ═══ -->
+<header class="topbar">
+  <div class="topbar-left">
+    <button class="hamburger" id="hamburger" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="brand">
+      <div class="brand-mark">G</div>
+      <div>
+        <div class="brand-name">GraveMap</div>
+        <div class="brand-tagline">Digital Cemetery Management</div>
+      </div>
+    </div>
   </div>
+  <div class="topbar-right">
+    <div id="auth-area">
+      <button class="btn-signin" id="btn-signin">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Admin Sign In
+      </button>
+      <div class="user-pill hidden" id="user-pill">
+        <img id="user-avatar" src="" alt=""/>
+        <span id="user-name"></span>
+        <button class="btn-signout" id="btn-signout">Sign out</button>
+      </div>
+    </div>
+  </div>
+</header>
 
-  <nav class="sidebar-nav">
-    <a href="#" class="nav-item active" data-page="search">
-      <span class="nav-icon">🔍</span> Search Graves
+<!-- ═══ LAYOUT ═══ -->
+<div class="app-shell">
+
+  <!-- SIDEBAR -->
+  <nav class="sidebar" id="sidebar">
+    <div class="nav-section-label">Public</div>
+    <a class="nav-item active" data-page="search" href="#">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      Search Graves
     </a>
-    <a href="#" class="nav-item" data-page="map">
-      <span class="nav-icon">🗺</span> Cemetery Map
+    <a class="nav-item" data-page="map" href="#">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
+      Cemetery Map
     </a>
-    <a href="#" class="nav-item" data-page="cemeteries">
-      <span class="nav-icon">🏛</span> Cemeteries
+    <a class="nav-item" data-page="cemeteries" href="#">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+      Cemeteries
     </a>
-    <div class="nav-divider"></div>
-    <a href="#" class="nav-item admin-only hidden" data-page="admin-graves">
-      <span class="nav-icon">⬡</span> Manage Graves
+    <a class="nav-item" data-page="request" href="#">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Report Correction
     </a>
-    <a href="#" class="nav-item admin-only hidden" data-page="admin-cemetery">
-      <span class="nav-icon">⚙</span> Cemetery Settings
+
+    <div class="nav-section-label admin-only hidden">Admin</div>
+    <a class="nav-item admin-only hidden" data-page="admin-graves" href="#">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      Manage Graves
     </a>
-    <a href="#" class="nav-item admin-only hidden" data-page="stats">
-      <span class="nav-icon">📊</span> Statistics
+    <a class="nav-item admin-only hidden" data-page="stats" href="#">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Statistics
+    </a>
+    <a class="nav-item admin-only hidden" data-page="requests-admin" href="#">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Correction Requests
+      <span class="badge-count" id="requests-count" style="display:none"></span>
+    </a>
+    <a class="nav-item admin-only hidden" data-page="maintenance" href="#">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+      Maintenance
     </a>
   </nav>
 
-  <div class="sidebar-footer">
-    <div id="auth-area">
-      <button class="btn-signin" id="btn-signin">Sign in as Admin</button>
-      <div class="user-info hidden" id="user-info">
-        <img id="user-avatar" src="" alt="" />
-        <div>
-          <div id="user-name" class="user-name"></div>
-          <button class="btn-signout" id="btn-signout">Sign out</button>
+  <!-- MAIN -->
+  <main class="main" id="main">
+
+    <!-- ══ PAGE: SEARCH ══ -->
+    <div class="page active" id="page-search">
+      <div class="page-hero">
+        <div class="page-hero-text">
+          <h1>Find a grave</h1>
+          <p>Search by name, father's name, or grave number across all registered cemeteries.</p>
         </div>
       </div>
-    </div>
-  </div>
-</aside>
-
-<!-- ═══════════════════════════ MAIN ═══════════════════════════ -->
-<main class="main-content" id="main-content">
-
-  <!-- HAMBURGER -->
-  <button class="hamburger" id="hamburger">☰</button>
-
-  <!-- ── PAGE: SEARCH ── -->
-  <div class="page active" id="page-search">
-    <div class="page-header">
-      <h1>Find a Grave</h1>
-      <p class="subtitle">Search across all registered cemeteries</p>
-    </div>
-
-    <div class="search-box-wrap">
-      <div class="search-box">
-        <span class="search-icon">🔍</span>
-        <input type="text" id="search-input" placeholder="Enter name, father's name, or grave number…" autocomplete="off" />
-        <button class="btn-clear" id="btn-search-clear">✕</button>
+      <div class="search-wrap">
+        <div class="search-bar">
+          <svg class="search-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+          <input id="search-input" type="text" placeholder="Enter name, father's name, or grave ID…" autocomplete="off"/>
+          <button class="search-clear" id="search-clear">✕</button>
+        </div>
+        <div class="search-filters">
+          <select id="f-cemetery"><option value="">All cemeteries</option></select>
+          <select id="f-gender"><option value="">Any gender</option><option value="male">Male</option><option value="female">Female</option></select>
+          <select id="f-status"><option value="">Any status</option><option value="occupied">Occupied</option><option value="reserved">Reserved</option><option value="empty">Empty</option></select>
+        </div>
       </div>
-      <div class="search-filters">
-        <select id="filter-cemetery"><option value="">All Cemeteries</option></select>
-        <select id="filter-gender"><option value="">Any Gender</option><option value="male">Male</option><option value="female">Female</option></select>
+      <div id="search-results" class="results-grid"></div>
+      <div class="empty-hint" id="search-hint">
+        <div class="empty-glyph">☽</div>
+        <p>Enter a name above to begin searching.</p>
       </div>
     </div>
 
-    <div id="search-results" class="results-grid"></div>
-    <div class="empty-state" id="search-empty">
-      <div class="empty-icon">⬡</div>
-      <p>Enter a name above to begin your search.</p>
-    </div>
-  </div>
-
-  <!-- ── PAGE: MAP ── -->
-  <div class="page" id="page-map">
-    <div class="page-header">
-      <h1>Cemetery Map</h1>
-      <div class="map-controls">
-        <select id="map-cemetery-select"><option value="">Select Cemetery…</option></select>
+    <!-- ══ PAGE: MAP ══ -->
+    <div class="page" id="page-map">
+      <div class="map-toolbar">
+        <select id="map-cem-sel"><option value="">All cemeteries</option></select>
         <div class="map-legend">
-          <span class="legend-dot green"></span> Available
-          <span class="legend-dot red"></span> Occupied
-          <span class="legend-dot yellow"></span> Reserved
+          <span class="ldot empty"></span>Available
+          <span class="ldot occupied"></span>Occupied
+          <span class="ldot reserved"></span>Reserved
+          <span class="ldot blocked"></span>Blocked
+        </div>
+        <div class="map-view-toggle">
+          <button class="vtoggle active" data-view="gps" id="vtoggle-gps">GPS Map</button>
+          <button class="vtoggle" data-view="grid" id="vtoggle-grid">Section Grid</button>
+          <button class="vtoggle" data-view="both" id="vtoggle-both">Both</button>
+        </div>
+      </div>
+      <div class="map-area" id="map-area">
+        <div class="map-pane" id="pane-gps">
+          <div class="pane-label">GPS Map — OpenStreetMap + CARTO</div>
+          <div id="leaflet-map"></div>
+        </div>
+        <div class="map-pane hidden" id="pane-grid">
+          <div class="pane-label">Section Grid</div>
+          <div id="grid-map"></div>
         </div>
       </div>
     </div>
-    <div class="map-split">
-      <!-- Real GPS map -->
-      <div class="map-panel">
-        <div class="map-panel-label">GPS Map</div>
-        <div id="leaflet-map"></div>
+
+    <!-- ══ PAGE: CEMETERIES ══ -->
+    <div class="page" id="page-cemeteries">
+      <div class="page-header">
+        <div><h1>Cemeteries</h1><p class="page-sub">All registered cemeteries</p></div>
+        <button class="btn-primary admin-only hidden" id="btn-add-cemetery">+ Add Cemetery</button>
       </div>
-      <!-- Grid layout -->
-      <div class="map-panel">
-        <div class="map-panel-label">Section Grid</div>
-        <div id="grid-map"></div>
+      <div class="cem-grid" id="cemeteries-list"></div>
+    </div>
+
+    <!-- ══ PAGE: REPORT CORRECTION ══ -->
+    <div class="page" id="page-request">
+      <div class="page-header">
+        <div><h1>Report a correction</h1><p class="page-sub">Found wrong information? Let the administrator know.</p></div>
+      </div>
+      <div class="form-card" style="max-width:560px">
+        <form id="correction-form">
+          <label class="field-label">Cemetery
+            <select id="req-cemetery" required><option value="">Select cemetery…</option></select>
+          </label>
+          <label class="field-label">Grave ID / Plot number
+            <input type="text" id="req-grave" placeholder="e.g. Section A, Row 3, Plot 12" required/>
+          </label>
+          <label class="field-label">Type of issue
+            <select id="req-type" required>
+              <option value="">Select…</option>
+              <option value="wrong-name">Wrong name</option>
+              <option value="wrong-date">Wrong date</option>
+              <option value="wrong-location">Wrong location</option>
+              <option value="missing-info">Missing information</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label class="field-label">Your message
+            <textarea id="req-message" rows="4" placeholder="Describe the correction…" required></textarea>
+          </label>
+          <label class="field-label">Your name (optional)
+            <input type="text" id="req-name" placeholder="Anonymous if left blank"/>
+          </label>
+          <label class="field-label">Contact (optional)
+            <input type="text" id="req-contact" placeholder="Email or phone"/>
+          </label>
+          <button type="submit" class="btn-primary" style="margin-top:.5rem">Submit Report</button>
+        </form>
       </div>
     </div>
-  </div>
 
-  <!-- ── PAGE: CEMETERIES LIST ── -->
-  <div class="page" id="page-cemeteries">
-    <div class="page-header">
-      <h1>Cemeteries</h1>
-      <button class="btn-primary admin-only hidden" id="btn-add-cemetery">+ Add Cemetery</button>
+    <!-- ══ PAGE: ADMIN GRAVES ══ -->
+    <div class="page" id="page-admin-graves">
+      <div class="page-header">
+        <div><h1>Manage graves</h1><p class="page-sub">Register, edit, and track all burial plots</p></div>
+        <button class="btn-primary" id="btn-add-grave">+ Register Grave</button>
+      </div>
+      <div class="filter-bar">
+        <select id="ag-cem-filter"><option value="">All cemeteries</option></select>
+        <select id="ag-status-filter">
+          <option value="">All status</option>
+          <option value="empty">Empty</option>
+          <option value="reserved">Reserved</option>
+          <option value="occupied">Occupied</option>
+          <option value="blocked">Blocked</option>
+        </select>
+        <input type="text" id="ag-search" placeholder="Search name or plot…" class="filter-input"/>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" id="graves-table">
+          <thead><tr>
+            <th>Plot</th><th>Cemetery</th><th>Section / Row</th>
+            <th>Status</th><th>Deceased</th><th>Death Date</th><th>Maintenance</th><th>Actions</th>
+          </tr></thead>
+          <tbody id="graves-tbody"></tbody>
+        </table>
+      </div>
     </div>
-    <div id="cemeteries-list" class="card-grid"></div>
-  </div>
 
-  <!-- ── PAGE: ADMIN GRAVES ── -->
-  <div class="page" id="page-admin-graves">
-    <div class="page-header">
-      <h1>Manage Graves</h1>
-      <button class="btn-primary" id="btn-add-grave">+ Register Grave</button>
+    <!-- ══ PAGE: STATS ══ -->
+    <div class="page" id="page-stats">
+      <div class="page-header">
+        <div><h1>Statistics</h1><p class="page-sub">Cemetery occupancy and burial records</p></div>
+        <select id="stats-cem-sel"><option value="">All cemeteries</option></select>
+      </div>
+      <div class="stats-tiles" id="stats-tiles"></div>
+      <div class="stats-charts">
+        <div class="chart-card">
+          <div class="chart-card-title">Occupancy breakdown</div>
+          <div class="bar-chart" id="chart-occ"></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title">Gender distribution</div>
+          <div class="bar-chart" id="chart-gender"></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title">Burials per year</div>
+          <div class="bar-chart" id="chart-years"></div>
+        </div>
+      </div>
     </div>
-    <div class="admin-filter-bar">
-      <select id="admin-cemetery-filter"><option value="">All Cemeteries</option></select>
-      <select id="admin-status-filter">
-        <option value="">All Status</option>
-        <option value="empty">Empty</option>
-        <option value="reserved">Reserved</option>
-        <option value="occupied">Occupied</option>
-      </select>
+
+    <!-- ══ PAGE: REQUESTS ADMIN ══ -->
+    <div class="page" id="page-requests-admin">
+      <div class="page-header">
+        <div><h1>Correction requests</h1><p class="page-sub">Reported by visitors</p></div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Date</th><th>Cemetery</th><th>Grave / Plot</th><th>Issue</th><th>Message</th><th>Contact</th><th>Actions</th></tr></thead>
+          <tbody id="requests-tbody"></tbody>
+        </table>
+      </div>
     </div>
-    <table class="data-table" id="graves-table">
-      <thead>
-        <tr>
-          <th>Grave ID</th><th>Cemetery</th><th>Section</th><th>Row</th><th>Plot</th>
-          <th>Status</th><th>Deceased</th><th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="graves-tbody"></tbody>
-    </table>
-  </div>
 
-  <!-- ── PAGE: CEMETERY SETTINGS ── -->
-  <div class="page" id="page-admin-cemetery">
-    <div class="page-header"><h1>Cemetery Settings</h1></div>
-    <div id="cemetery-settings-content"></div>
-  </div>
+    <!-- ══ PAGE: MAINTENANCE ══ -->
+    <div class="page" id="page-maintenance">
+      <div class="page-header">
+        <div><h1>Maintenance tracker</h1><p class="page-sub">Mark graves that need attention</p></div>
+      </div>
+      <div class="filter-bar">
+        <select id="maint-cem-filter"><option value="">All cemeteries</option></select>
+        <select id="maint-status-filter">
+          <option value="">All flags</option>
+          <option value="needs-cleaning">Needs cleaning</option>
+          <option value="damaged">Damaged</option>
+          <option value="broken">Broken</option>
+          <option value="restored">Restored</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Plot</th><th>Cemetery</th><th>Deceased</th><th>Flag</th><th>Note</th><th>Actions</th></tr></thead>
+          <tbody id="maint-tbody"></tbody>
+        </table>
+      </div>
+    </div>
 
-  <!-- ── PAGE: STATS ── -->
-  <div class="page" id="page-stats">
-    <div class="page-header"><h1>Statistics</h1></div>
-    <select id="stats-cemetery-select" style="margin-bottom:1.5rem">
-      <option value="">All Cemeteries</option>
-    </select>
-    <div class="stats-grid" id="stats-grid"></div>
-    <div class="stats-chart-area" id="stats-chart"></div>
-  </div>
+  </main>
+</div>
 
-</main>
+<!-- ══════════ MODALS ══════════ -->
 
-<!-- ══════════════ MODALS ══════════════ -->
-
-<!-- Grave Detail Modal -->
-<div class="modal-overlay" id="modal-grave-detail">
-  <div class="modal">
-    <button class="modal-close" data-close="modal-grave-detail">✕</button>
-    <div id="grave-detail-content"></div>
+<!-- Grave Detail -->
+<div class="overlay" id="overlay-grave">
+  <div class="modal modal-wide">
+    <button class="modal-x" data-close="overlay-grave">✕</button>
+    <div id="grave-detail"></div>
   </div>
 </div>
 
-<!-- Add/Edit Grave Modal -->
-<div class="modal-overlay" id="modal-grave-form">
-  <div class="modal modal-wide">
-    <button class="modal-close" data-close="modal-grave-form">✕</button>
-    <h2 id="grave-form-title">Register Grave</h2>
-    <form id="grave-form" class="form-grid">
-      <div class="form-section-label">📍 Location</div>
+<!-- Grave Form -->
+<div class="overlay" id="overlay-grave-form">
+  <div class="modal modal-xl">
+    <button class="modal-x" data-close="overlay-grave-form">✕</button>
+    <h2 class="modal-title" id="grave-form-title">Register grave</h2>
+    <form id="grave-form">
+      <div class="form-section">Location</div>
       <div class="form-row">
-        <label>Cemetery<select id="gf-cemetery" required></select></label>
-        <label>Section<input type="text" id="gf-section" placeholder="e.g. A" required /></label>
-        <label>Row<input type="text" id="gf-row" placeholder="e.g. 3" required /></label>
-        <label>Plot #<input type="text" id="gf-plot" placeholder="e.g. 12" required /></label>
+        <label class="field-label">Cemetery <select id="gf-cem" required><option value="">Select…</option></select></label>
+        <label class="field-label">Section <input id="gf-section" type="text" placeholder="e.g. A" required/></label>
+        <label class="field-label">Row <input id="gf-row" type="text" placeholder="e.g. 3" required/></label>
+        <label class="field-label">Plot # <input id="gf-plot" type="text" placeholder="e.g. 12" required/></label>
       </div>
       <div class="form-row">
-        <label>Latitude<input type="number" id="gf-lat" step="any" placeholder="Optional GPS lat" /></label>
-        <label>Longitude<input type="number" id="gf-lng" step="any" placeholder="Optional GPS lng" /></label>
-        <label>Status
+        <label class="field-label">Latitude <input id="gf-lat" type="number" step="any" placeholder="GPS lat (optional)"/></label>
+        <label class="field-label">Longitude <input id="gf-lng" type="number" step="any" placeholder="GPS lng (optional)"/></label>
+        <label class="field-label">Status
           <select id="gf-status">
             <option value="empty">Empty</option>
             <option value="reserved">Reserved</option>
             <option value="occupied">Occupied</option>
+            <option value="blocked">Blocked</option>
           </select>
         </label>
       </div>
 
-      <div class="form-section-label" id="deceased-section-label">👤 Deceased Person</div>
-      <div id="deceased-fields">
+      <div class="form-section" id="dec-section-lbl">Deceased person</div>
+      <div id="dec-fields">
         <div class="form-row">
-          <label>Full Name<input type="text" id="gf-name" placeholder="Full name" /></label>
-          <label>Father's Name<input type="text" id="gf-father" placeholder="Father's name" /></label>
-          <label>Gender
+          <label class="field-label">Full name <input id="gf-name" type="text" placeholder="Full name"/></label>
+          <label class="field-label">Father's name <input id="gf-father" type="text" placeholder="Father's name"/></label>
+          <label class="field-label">Gender
             <select id="gf-gender">
               <option value="">Select…</option>
               <option value="male">Male</option>
@@ -261,52 +365,96 @@ const firebaseConfig = {
           </label>
         </div>
         <div class="form-row">
-          <label>Date of Birth<input type="date" id="gf-dob" /></label>
-          <label>Date of Death<input type="date" id="gf-dod" /></label>
-          <label>Burial Date<input type="date" id="gf-burial" /></label>
+          <label class="field-label">Date of birth <input id="gf-dob" type="date"/></label>
+          <label class="field-label">Date of death <input id="gf-dod" type="date"/></label>
+          <label class="field-label">Burial date <input id="gf-burial" type="date"/></label>
         </div>
-        <div class="form-row full">
-          <label>Biography (optional)<textarea id="gf-bio" rows="3" placeholder="A short biography…"></textarea></label>
-        </div>
+        <label class="field-label">Biography (optional)
+          <textarea id="gf-bio" rows="3" placeholder="A short biography…"></textarea>
+        </label>
+      </div>
+
+      <div class="form-section">Maintenance</div>
+      <div class="form-row">
+        <label class="field-label">Maintenance flag
+          <select id="gf-maint">
+            <option value="">None</option>
+            <option value="needs-cleaning">Needs cleaning</option>
+            <option value="damaged">Damaged</option>
+            <option value="broken">Broken</option>
+            <option value="restored">Restored</option>
+          </select>
+        </label>
+        <label class="field-label">Maintenance note
+          <input id="gf-maint-note" type="text" placeholder="Optional note…"/>
+        </label>
       </div>
 
       <div class="form-actions">
-        <button type="button" class="btn-secondary" data-close="modal-grave-form">Cancel</button>
-        <button type="submit" class="btn-primary" id="grave-form-submit">Save Grave</button>
+        <button type="button" class="btn-secondary" data-close="overlay-grave-form">Cancel</button>
+        <button type="submit" class="btn-primary" id="grave-submit-btn">Save grave</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- Add Cemetery Modal -->
-<div class="modal-overlay" id="modal-cemetery-form">
+<!-- Cemetery Form -->
+<div class="overlay" id="overlay-cem-form">
   <div class="modal">
-    <button class="modal-close" data-close="modal-cemetery-form">✕</button>
-    <h2>Add Cemetery</h2>
-    <form id="cemetery-form" class="form-grid">
+    <button class="modal-x" data-close="overlay-cem-form">✕</button>
+    <h2 class="modal-title">Add cemetery</h2>
+    <form id="cem-form">
       <div class="form-row">
-        <label>Cemetery Name<input type="text" id="cf-name" required /></label>
-        <label>Country<input type="text" id="cf-country" /></label>
+        <label class="field-label">Cemetery name <input id="cf-name" type="text" required/></label>
+        <label class="field-label">Country <input id="cf-country" type="text"/></label>
       </div>
       <div class="form-row">
-        <label>Province<input type="text" id="cf-province" /></label>
-        <label>City<input type="text" id="cf-city" /></label>
+        <label class="field-label">Province <input id="cf-province" type="text"/></label>
+        <label class="field-label">District <input id="cf-district" type="text"/></label>
+        <label class="field-label">City <input id="cf-city" type="text"/></label>
       </div>
-      <label>Address<input type="text" id="cf-address" /></label>
-      <label>Description<textarea id="cf-desc" rows="2"></textarea></label>
+      <label class="field-label">Address <input id="cf-address" type="text"/></label>
+      <label class="field-label">Description <textarea id="cf-desc" rows="2"></textarea></label>
       <div class="form-row">
-        <label>Latitude<input type="number" id="cf-lat" step="any" placeholder="GPS latitude" /></label>
-        <label>Longitude<input type="number" id="cf-lng" step="any" placeholder="GPS longitude" /></label>
+        <label class="field-label">Latitude <input id="cf-lat" type="number" step="any" placeholder="Cemetery GPS lat"/></label>
+        <label class="field-label">Longitude <input id="cf-lng" type="number" step="any" placeholder="Cemetery GPS lng"/></label>
+      </div>
+      <div class="hint-box">
+        <b>Boundary polygon:</b> After saving, open the Cemetery Map and use the Draw Boundary tool to draw the exact cemetery boundary on the map.
       </div>
       <div class="form-actions">
-        <button type="button" class="btn-secondary" data-close="modal-cemetery-form">Cancel</button>
-        <button type="submit" class="btn-primary">Save Cemetery</button>
+        <button type="button" class="btn-secondary" data-close="overlay-cem-form">Cancel</button>
+        <button type="submit" class="btn-primary">Save cemetery</button>
       </div>
     </form>
   </div>
 </div>
 
-<!-- Toast -->
+<!-- Maintenance Modal -->
+<div class="overlay" id="overlay-maint">
+  <div class="modal">
+    <button class="modal-x" data-close="overlay-maint">✕</button>
+    <h2 class="modal-title">Update maintenance flag</h2>
+    <form id="maint-form">
+      <input type="hidden" id="mf-grave-id"/>
+      <label class="field-label">Flag
+        <select id="mf-flag">
+          <option value="">None</option>
+          <option value="needs-cleaning">Needs cleaning</option>
+          <option value="damaged">Damaged</option>
+          <option value="broken">Broken</option>
+          <option value="restored">Restored</option>
+        </select>
+      </label>
+      <label class="field-label">Note <textarea id="mf-note" rows="2"></textarea></label>
+      <div class="form-actions">
+        <button type="button" class="btn-secondary" data-close="overlay-maint">Cancel</button>
+        <button type="submit" class="btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="js/app.js"></script>
