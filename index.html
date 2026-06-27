@@ -3,31 +3,6 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<<<<<<< HEAD
-<title>GraveMap — Digitally preserving cemeteries for future generations</title>
-
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
-
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-<link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.16.0/dist/leaflet-geoman.css"/>
-<script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@2.16.0/dist/leaflet-geoman.min.js"></script>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-
-<link rel="stylesheet" href="css/style.css"/>
-
-<script type="module">
-import { initializeApp }                                        from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getDatabase, ref, set, get, push, remove, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
-
-// ── REPLACE WITH YOUR FIREBASE CONFIG ──────────────────────────────
-
-=======
 <title>GraveMap – Digital Cemetery Management</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
@@ -47,7 +22,6 @@ import { getDatabase, ref, set, get, push, remove, onValue, update }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
 
 // ── REPLACE WITH YOUR FIREBASE CONFIG ──
->>>>>>> 9a9b71585bc91b90d14019bca1b7d8c19af9cfde
 const firebaseConfig = {
   apiKey: "YOUR_API_KEY",
   authDomain: "YOUR_PROJECT.firebaseapp.com",
@@ -57,17 +31,6 @@ const firebaseConfig = {
   messagingSenderId: "YOUR_SENDER_ID",
   appId: "YOUR_APP_ID"
 };
-<<<<<<< HEAD
-// ───────────────────────────────────────────────────────────────────
-
-const app  = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db   = getDatabase(app);
-const prov = new GoogleAuthProvider();
-
-window.__fb = { auth, db, ref, set, get, push, remove, onValue, update,
-  signInWithPopup, signOut, onAuthStateChanged, prov };
-=======
 // ────────────────────────────────────────
 
 const app = initializeApp(firebaseConfig);
@@ -77,7 +40,6 @@ const provider = new GoogleAuthProvider();
 
 window.__fb = { auth, db, provider, ref, set, get, push, remove, onValue, update,
   signInWithPopup, signOut, onAuthStateChanged };
->>>>>>> 9a9b71585bc91b90d14019bca1b7d8c19af9cfde
 
 onAuthStateChanged(auth, user => {
   window.__user = user || null;
@@ -87,266 +49,6 @@ onAuthStateChanged(auth, user => {
 </head>
 <body>
 
-<<<<<<< HEAD
-<!-- ═══════════════════════════════════════
-  FLOATING TOP BAR
-═══════════════════════════════════════ -->
-<header class="topbar">
-  <div class="topbar-brand">
-    <div class="brand-icon">G</div>
-    <div class="brand-text">
-      <span class="brand-name">GraveMap</span>
-      <span class="brand-tag">Digitally preserving cemeteries</span>
-    </div>
-  </div>
-
-  <div class="topbar-nav" id="topbar-nav">
-    <button class="tnav active" data-view="map">🗺 Map</button>
-    <button class="tnav" data-view="search">🔍 Search</button>
-    <button class="tnav" data-view="cemeteries">🏛 Cemeteries</button>
-    <button class="tnav admin-only hidden" data-view="admin">⚙ Admin</button>
-  </div>
-
-  <div class="topbar-auth">
-    <button class="btn-login" id="btn-login">Sign in as Admin</button>
-    <div class="user-chip hidden" id="user-chip">
-      <img id="u-avatar" src="" alt=""/>
-      <span id="u-name"></span>
-      <button id="btn-logout">↩</button>
-    </div>
-  </div>
-</header>
-
-<!-- ═══════════════════════════════════════
-  FULL-SCREEN MAP (always behind)
-═══════════════════════════════════════ -->
-<div id="map-root"></div>
-
-<!-- ═══════════════════════════════════════
-  PANELS (float over map)
-═══════════════════════════════════════ -->
-
-<!-- MAP PANEL: cemetery selector + map tools -->
-<div class="float-panel panel-left" id="panel-map">
-  <div class="fp-title">Cemeteries</div>
-  <div class="fp-search">
-    <input id="map-cem-search" type="text" placeholder="Filter cemeteries…"/>
-  </div>
-  <div id="map-cem-list" class="cem-list-scroll"></div>
-  <div class="fp-legend">
-    <span class="leg available"></span>Available
-    <span class="leg occupied"></span>Occupied
-    <span class="leg reserved"></span>Reserved
-  </div>
-</div>
-
-<!-- MAP TOOLS (admin only, floats right) -->
-<div class="float-tools hidden admin-only" id="map-tools">
-  <div class="tool-label">Drawing tools</div>
-  <button class="tool-btn" id="tool-draw-boundary" title="Draw cemetery boundary">
-    <span>⬡</span> Draw Boundary
-  </button>
-  <button class="tool-btn" id="tool-draw-grave" title="Draw grave rectangle">
-    <span>⬜</span> Draw Grave
-  </button>
-  <button class="tool-btn" id="tool-gen-grid" title="Generate grave grid inside boundary">
-    <span>▦</span> Generate Grid
-  </button>
-  <div class="tool-divider"></div>
-  <button class="tool-btn tool-danger" id="tool-delete" title="Delete selected shape">
-    <span>🗑</span> Delete
-  </button>
-  <div class="tool-hint" id="tool-hint"></div>
-</div>
-
-<!-- SEARCH PANEL -->
-<div class="view-panel hidden" id="panel-search">
-  <div class="vp-header">
-    <h2>Search graves</h2>
-    <p>Find anyone across all registered cemeteries</p>
-  </div>
-  <div class="search-bar">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-    <input id="search-q" type="text" placeholder="Name, father's name, cemetery…" autocomplete="off"/>
-    <button id="search-clear-btn">✕</button>
-  </div>
-  <div class="search-chips">
-    <select id="sf-cem"><option value="">All cemeteries</option></select>
-    <select id="sf-city"><option value="">All cities</option></select>
-    <select id="sf-gender"><option value="">Any gender</option><option value="male">Male</option><option value="female">Female</option></select>
-  </div>
-  <div id="search-results"></div>
-  <div class="search-empty" id="search-empty">
-    <div style="font-size:2rem;margin-bottom:.5rem">☽</div>
-    <p>Enter a name to search across all cemeteries.</p>
-  </div>
-</div>
-
-<!-- CEMETERIES PANEL -->
-<div class="view-panel hidden" id="panel-cemeteries">
-  <div class="vp-header">
-    <h2>All cemeteries</h2>
-    <p>Registered cemeteries on GraveMap</p>
-  </div>
-  <div id="cem-cards-list"></div>
-
-  <!-- Request new cemetery (public) -->
-  <div class="req-section">
-    <div class="req-section-title">Don't see your cemetery?</div>
-    <button class="btn-outline" id="btn-req-cemetery">+ Request to add a cemetery</button>
-  </div>
-</div>
-
-<!-- ADMIN PANEL -->
-<div class="view-panel hidden" id="panel-admin">
-  <div class="vp-header">
-    <h2>Admin dashboard</h2>
-  </div>
-  <div class="dash-tiles" id="dash-tiles"></div>
-  <div class="admin-tabs">
-    <button class="atab active" data-atab="graves">Graves</button>
-    <button class="atab" data-atab="requests">Requests <span class="req-badge" id="req-badge" style="display:none"></span></button>
-    <button class="atab" data-atab="cemeteries-admin">Cemeteries</button>
-  </div>
-  <div id="atab-graves" class="atab-content"></div>
-  <div id="atab-requests" class="atab-content hidden"></div>
-  <div id="atab-cemeteries-admin" class="atab-content hidden"></div>
-</div>
-
-<!-- ═══════════════════════════════════════
-  MODALS
-═══════════════════════════════════════ -->
-
-<!-- GRAVE DETAIL -->
-<div class="overlay" id="ov-grave">
-  <div class="modal">
-    <button class="modal-x" data-close="ov-grave">✕</button>
-    <div id="grave-detail-body"></div>
-  </div>
-</div>
-
-<!-- ADD CEMETERY WIZARD -->
-<div class="overlay" id="ov-add-cem">
-  <div class="modal modal-wide">
-    <button class="modal-x" data-close="ov-add-cem">✕</button>
-    <div class="wizard-header">
-      <div class="wizard-steps">
-        <div class="wstep active" data-step="1">1 · Info</div>
-        <div class="wstep" data-step="2">2 · Location</div>
-        <div class="wstep" data-step="3">3 · Boundary</div>
-      </div>
-    </div>
-
-    <!-- Step 1: Info -->
-    <div class="wpage active" id="cem-step-1">
-      <h3 class="wpage-title">Cemetery information</h3>
-      <div class="field-row">
-        <div class="field">
-          <label>Cemetery name *</label>
-          <input id="cw-name" type="text" placeholder="e.g. Karachi Qabristan"/>
-        </div>
-        <div class="field">
-          <label>Country</label>
-          <input id="cw-country" type="text" placeholder="e.g. Pakistan"/>
-        </div>
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label>Province</label>
-          <input id="cw-province" type="text"/>
-        </div>
-        <div class="field">
-          <label>District</label>
-          <input id="cw-district" type="text"/>
-        </div>
-        <div class="field">
-          <label>City</label>
-          <input id="cw-city" type="text" placeholder="e.g. Karachi"/>
-        </div>
-      </div>
-      <div class="field">
-        <label>Address</label>
-        <input id="cw-address" type="text" placeholder="Street or area"/>
-      </div>
-      <div class="field">
-        <label>Description</label>
-        <textarea id="cw-desc" rows="2" placeholder="Brief description…"></textarea>
-      </div>
-      <div class="wpage-actions">
-        <button class="btn-primary" onclick="cemWizardNext(1)">Next → Location</button>
-      </div>
-    </div>
-
-    <!-- Step 2: Location -->
-    <div class="wpage" id="cem-step-2">
-      <h3 class="wpage-title">Locate the cemetery</h3>
-      <p class="wpage-hint">Search for the location or click directly on the map to pin the cemetery center.</p>
-      <div class="field">
-        <label>Search location</label>
-        <input id="cw-loc-search" type="text" placeholder="Search city or area…"/>
-      </div>
-      <div id="cem-locate-map" style="height:300px;border-radius:10px;overflow:hidden;margin:1rem 0"></div>
-      <div class="field-row">
-        <div class="field">
-          <label>Latitude</label>
-          <input id="cw-lat" type="number" step="any" readonly/>
-        </div>
-        <div class="field">
-          <label>Longitude</label>
-          <input id="cw-lng" type="number" step="any" readonly/>
-        </div>
-      </div>
-      <div class="wpage-actions">
-        <button class="btn-secondary" onclick="cemWizardBack(2)">← Back</button>
-        <button class="btn-primary" onclick="cemWizardNext(2)">Next → Draw Boundary</button>
-      </div>
-    </div>
-
-    <!-- Step 3: Boundary -->
-    <div class="wpage" id="cem-step-3">
-      <h3 class="wpage-title">Draw the cemetery boundary</h3>
-      <p class="wpage-hint">Use the polygon tool to trace the exact boundary of the cemetery. Every cemetery has its own unique shape.</p>
-      <div id="cem-boundary-map" style="height:340px;border-radius:10px;overflow:hidden;margin:.75rem 0"></div>
-      <div class="boundary-status" id="boundary-status">No boundary drawn yet. Use the polygon tool above the map.</div>
-      <div class="wpage-actions">
-        <button class="btn-secondary" onclick="cemWizardBack(3)">← Back</button>
-        <button class="btn-primary" id="btn-save-cemetery">Save cemetery</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ADD GRAVE WIZARD -->
-<div class="overlay" id="ov-add-grave">
-  <div class="modal modal-wide">
-    <button class="modal-x" data-close="ov-add-grave">✕</button>
-    <div class="wizard-header">
-      <div class="wizard-steps">
-        <div class="wstep active" data-step="1">1 · Person</div>
-        <div class="wstep" data-step="2">2 · Cemetery</div>
-        <div class="wstep" data-step="3">3 · Draw Grave</div>
-      </div>
-    </div>
-
-    <!-- Step 1: Person info -->
-    <div class="wpage active" id="gw-step-1">
-      <h3 class="wpage-title">Deceased person information</h3>
-      <div class="field-row">
-        <div class="field">
-          <label>Full name *</label>
-          <input id="gw-name" type="text" placeholder="Full name"/>
-        </div>
-        <div class="field">
-          <label>Father's name</label>
-          <input id="gw-father" type="text" placeholder="Father's name"/>
-        </div>
-        <div class="field">
-          <label>Gender</label>
-          <select id="gw-gender">
-            <option value="">Select…</option>
-            <option value="male">Male</option>
-            <option value="female">Female</option>
-=======
 <!-- ═══ TOPBAR ═══ -->
 <header class="topbar">
   <div class="topbar-left">
@@ -645,65 +347,10 @@ onAuthStateChanged(auth, user => {
             <option value="reserved">Reserved</option>
             <option value="occupied">Occupied</option>
             <option value="blocked">Blocked</option>
->>>>>>> 9a9b71585bc91b90d14019bca1b7d8c19af9cfde
           </select>
-        </div>
+        </label>
       </div>
-      <div class="field-row">
-        <div class="field">
-          <label>Date of birth</label>
-          <input id="gw-dob" type="date"/>
-        </div>
-        <div class="field">
-          <label>Date of death *</label>
-          <input id="gw-dod" type="date"/>
-        </div>
-        <div class="field">
-          <label>Burial date</label>
-          <input id="gw-burial" type="date"/>
-        </div>
-      </div>
-      <div class="field-row">
-        <div class="field">
-          <label>Age at death</label>
-          <input id="gw-age" type="number" placeholder="Auto-calculated if DOB set"/>
-        </div>
-        <div class="field">
-          <label>Status</label>
-          <select id="gw-status">
-            <option value="occupied">Occupied</option>
-            <option value="reserved">Reserved</option>
-            <option value="empty">Empty plot</option>
-          </select>
-        </div>
-      </div>
-      <div class="field">
-        <label>Section / Row / Plot (optional)</label>
-        <div class="field-row">
-          <input id="gw-section" type="text" placeholder="Section e.g. A"/>
-          <input id="gw-row" type="text" placeholder="Row e.g. 3"/>
-          <input id="gw-plot" type="text" placeholder="Plot e.g. 12"/>
-        </div>
-      </div>
-      <div class="field">
-        <label>Biography (optional)</label>
-        <textarea id="gw-bio" rows="2" placeholder="A few words about the person…"></textarea>
-      </div>
-      <div class="wpage-actions">
-        <button class="btn-primary" onclick="graveWizardNext(1)">Next → Select Cemetery</button>
-      </div>
-    </div>
 
-<<<<<<< HEAD
-    <!-- Step 2: Cemetery -->
-    <div class="wpage" id="gw-step-2">
-      <h3 class="wpage-title">Select cemetery</h3>
-      <p class="wpage-hint">Choose which cemetery this grave belongs to. The map will zoom to that cemetery.</p>
-      <div id="gw-cem-options" class="cem-radio-list"></div>
-      <div class="wpage-actions">
-        <button class="btn-secondary" onclick="graveWizardBack(2)">← Back</button>
-        <button class="btn-primary" onclick="graveWizardNext(2)">Next → Draw Grave</button>
-=======
       <div class="form-section" id="dec-section-lbl">Deceased person</div>
       <div id="dec-fields">
         <div class="form-row">
@@ -741,43 +388,16 @@ onAuthStateChanged(auth, user => {
         <label class="field-label">Maintenance note
           <input id="gf-maint-note" type="text" placeholder="Optional note…"/>
         </label>
->>>>>>> 9a9b71585bc91b90d14019bca1b7d8c19af9cfde
       </div>
-    </div>
 
-<<<<<<< HEAD
-    <!-- Step 3: Draw grave -->
-    <div class="wpage" id="gw-step-3">
-      <h3 class="wpage-title">Draw the grave location</h3>
-      <p class="wpage-hint">Click the rectangle tool, then drag to draw the exact grave plot on the map. Every grave is stored as a polygon — not just a pin.</p>
-      <div id="gw-draw-map" style="height:340px;border-radius:10px;overflow:hidden;margin:.75rem 0"></div>
-      <div class="boundary-status" id="grave-draw-status">No grave drawn yet. Click the rectangle tool and draw on the map.</div>
-      <div class="wpage-actions">
-        <button class="btn-secondary" onclick="graveWizardBack(3)">← Back</button>
-        <button class="btn-primary" id="btn-save-grave">Save grave</button>
-=======
       <div class="form-actions">
         <button type="button" class="btn-secondary" data-close="overlay-grave-form">Cancel</button>
         <button type="submit" class="btn-primary" id="grave-submit-btn">Save grave</button>
->>>>>>> 9a9b71585bc91b90d14019bca1b7d8c19af9cfde
       </div>
-    </div>
+    </form>
   </div>
 </div>
 
-<<<<<<< HEAD
-<!-- REQUEST CEMETERY MODAL -->
-<div class="overlay" id="ov-req-cem">
-  <div class="modal">
-    <button class="modal-x" data-close="ov-req-cem">✕</button>
-    <h3 class="modal-title">Request a cemetery</h3>
-    <p style="font-size:.85rem;color:#888;margin-bottom:1.25rem">The admin will review and add it.</p>
-    <form id="req-cem-form">
-      <div class="field"><label>Cemetery name *</label><input id="rc-name" type="text" required/></div>
-      <div class="field-row">
-        <div class="field"><label>City *</label><input id="rc-city" type="text" required/></div>
-        <div class="field"><label>Country</label><input id="rc-country" type="text"/></div>
-=======
 <!-- Cemetery Form -->
 <div class="overlay" id="overlay-cem-form">
   <div class="modal">
@@ -830,67 +450,11 @@ onAuthStateChanged(auth, user => {
       <div class="form-actions">
         <button type="button" class="btn-secondary" data-close="overlay-maint">Cancel</button>
         <button type="submit" class="btn-primary">Save</button>
->>>>>>> 9a9b71585bc91b90d14019bca1b7d8c19af9cfde
       </div>
-      <div class="field"><label>Description</label><textarea id="rc-desc" rows="2"></textarea></div>
-      <div class="field"><label>Your name (optional)</label><input id="rc-submitter" type="text"/></div>
-      <div class="field"><label>Contact (optional)</label><input id="rc-contact" type="text"/></div>
-      <button type="submit" class="btn-primary" style="margin-top:.5rem">Submit request</button>
     </form>
   </div>
 </div>
 
-<<<<<<< HEAD
-<!-- CORRECTION REQUEST MODAL -->
-<div class="overlay" id="ov-correction">
-  <div class="modal">
-    <button class="modal-x" data-close="ov-correction">✕</button>
-    <h3 class="modal-title">Report a correction</h3>
-    <form id="correction-form">
-      <input type="hidden" id="corr-grave-id"/>
-      <div class="field"><label>What is wrong?</label>
-        <select id="corr-type" required>
-          <option value="">Select…</option>
-          <option value="wrong-name">Wrong name</option>
-          <option value="wrong-date">Wrong date</option>
-          <option value="wrong-location">Wrong location</option>
-          <option value="missing-info">Missing information</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div class="field"><label>Details</label><textarea id="corr-msg" rows="3" placeholder="Describe the issue…" required></textarea></div>
-      <div class="field"><label>Your name (optional)</label><input id="corr-name" type="text"/></div>
-      <div class="field"><label>Contact (optional)</label><input id="corr-contact" type="text"/></div>
-      <button type="submit" class="btn-primary" style="margin-top:.5rem">Submit correction</button>
-    </form>
-  </div>
-</div>
-
-<!-- GENERATE GRID MODAL -->
-<div class="overlay" id="ov-grid-gen">
-  <div class="modal">
-    <button class="modal-x" data-close="ov-grid-gen">✕</button>
-    <h3 class="modal-title">Generate grave grid</h3>
-    <p class="wpage-hint">Automatically fill the cemetery boundary with a grid of evenly spaced grave plots.</p>
-    <div class="field">
-      <label>Cemetery</label>
-      <select id="gg-cem"><option value="">Select cemetery…</option></select>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Grave width (m)</label><input id="gg-w" type="number" value="2" min="1" max="10" step="0.5"/></div>
-      <div class="field"><label>Grave length (m)</label><input id="gg-l" type="number" value="3" min="1" max="10" step="0.5"/></div>
-      <div class="field"><label>Gap between graves (m)</label><input id="gg-gap" type="number" value="0.5" min="0" max="3" step="0.1"/></div>
-    </div>
-    <div class="hint-box" id="gg-preview-info"></div>
-    <div class="field-row" style="margin-top:1rem">
-      <button class="btn-secondary" onclick="previewGrid()">Preview</button>
-      <button class="btn-primary" id="btn-gen-grid">Generate graves</button>
-    </div>
-  </div>
-</div>
-
-=======
->>>>>>> 9a9b71585bc91b90d14019bca1b7d8c19af9cfde
 <div class="toast" id="toast"></div>
 
 <script src="js/app.js"></script>
