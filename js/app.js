@@ -1,855 +1,1213 @@
-// ═══════════════════════════════════════════
-//   GraveMap – app.js
-//   All app logic: routing, Firebase CRUD,
-//   Leaflet map, grid map, search, QR, stats
-// ═══════════════════════════════════════════
+/* ═══════════════════════════════════════
+   GraveMap v3 — app.js
+   Map-first. Polygons. Wizards.
+   Generate grave grid.
+═══════════════════════════════════════ */
 
-/* ── Wait for Firebase module to init ── */
-function waitForFirebase(cb, tries = 0) {
-  if (window.__firebase) return cb();
-  if (tries > 30) return console.error('Firebase not loaded');
-  setTimeout(() => waitForFirebase(cb, tries + 1), 150);
+// ── Firebase boot ──
+function waitFB(cb, n = 0) {
+  if (window.__fb) return cb();
+  if (n > 50) return console.error('Firebase not loaded');
+  setTimeout(() => waitFB(cb, n + 1), 150);
 }
 
-/* ══════════════════════════════════════
-   GLOBAL STATE
-══════════════════════════════════════ */
-const STATE = {
-  cemeteries: {},   // { id: cemetery }
-  graves:     {},   // { id: grave }
-  deceased:   {},   // { id: deceased }
-  editingGraveId: null,
-  leafletMap: null,
-  leafletMarkers: {},
+// ═══════════════════════════
+//  STATE
+// ═══════════════════════════
+const S = {
+  cemeteries:    {},
+  graves:        {},
+  requests:      {},
+  currentView:   'map',
+  selectedCemId: null,
+  // Map objects
+  MAP:            null,
+  boundaryLayers: {},   // cemId → L.layer
+  graveLayers:    {},   // graveId → L.layer
+  // Wizard state
+  cemWizardData:  {},
+  graveWizardData:{},
+  // Mini-maps (in modals)
+  locateMap:      null,
+  locateMarker:   null,
+  boundaryMap:    null,
+  boundaryDrawn:  null,
+  graveDrawMap:   null,
+  graveDrawn:     null,
+  // Grid preview
+  gridPreviewLayers: [],
 };
 
-/* ══════════════════════════════════════
-   FIREBASE HELPERS
-══════════════════════════════════════ */
-const FB = () => window.__firebase;
+// ═══════════════════════════
+//  FIREBASE HELPERS
+// ═══════════════════════════
+const fb = () => window.__fb;
 
 async function dbGet(path) {
-  const { db, ref, get } = FB();
-  const snap = await get(ref(db, path));
-  return snap.exists() ? snap.val() : null;
+  const { db, ref, get } = fb();
+  const s = await get(ref(db, path));
+  return s.exists() ? s.val() : null;
 }
-
 async function dbSet(path, data) {
-  const { db, ref, set } = FB();
-  await set(ref(db, path), data);
+  const { db, ref, set } = fb();
+  return set(ref(db, path), data);
 }
-
 async function dbPush(path, data) {
-  const { db, ref, push } = FB();
-  const newRef = push(ref(db, path));
-  await dbSet(newRef.key ? `${path}/${newRef.key}` : path, data);
-  return newRef.key;
+  const { db, ref, push } = fb();
+  const r = push(ref(db, path));
+  await dbSet(`${path}/${r.key}`, data);
+  return r.key;
 }
-
+async function dbUpdate(path, data) {
+  const { db, ref, update } = fb();
+  return update(ref(db, path), data);
+}
 async function dbRemove(path) {
-  const { db, ref, remove } = FB();
-  await remove(ref(db, path));
+  const { db, ref, remove } = fb();
+  return remove(ref(db, path));
 }
-
 function dbListen(path, cb) {
-  const { db, ref, onValue } = FB();
-  onValue(ref(db, path), snap => cb(snap.exists() ? snap.val() : {}));
+  const { db, ref, onValue } = fb();
+  onValue(ref(db, path), s => cb(s.exists() ? s.val() : {}));
 }
 
-/* ══════════════════════════════════════
-   ROUTER / PAGE NAVIGATION
-══════════════════════════════════════ */
-function navigate(pageId) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+// ═══════════════════════════
+//  MAIN MAP
+// ═══════════════════════════
+function initMainMap() {
+  S.MAP = L.map('map-root', { zoomControl: false }).setView([30.3753, 69.3451], 6);
 
-  const page = document.getElementById(`page-${pageId}`);
-  if (page) page.classList.add('active');
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>',
+    subdomains: 'abcd', maxZoom: 20
+  }).addTo(S.MAP);
 
-  const navItem = document.querySelector(`[data-page="${pageId}"]`);
-  if (navItem) navItem.classList.add('active');
+  L.control.zoom({ position: 'bottomright' }).addTo(S.MAP);
 
-  // Close sidebar on mobile
-  document.getElementById('sidebar').classList.remove('open');
-
-  // Page-specific init
-  if (pageId === 'map') initMapPage();
-  if (pageId === 'stats') renderStats();
-  if (pageId === 'admin-graves') renderGravesTable();
-  if (pageId === 'cemeteries') renderCemeteriesList();
+  // Admin drawing controls (geoman)
+  S.MAP.pm.setGlobalOptions({ snappable: false });
 }
 
-document.querySelectorAll('.nav-item').forEach(item => {
-  item.addEventListener('click', e => {
-    e.preventDefault();
-    navigate(item.dataset.page);
-  });
-});
-
-/* Hamburger */
-document.getElementById('hamburger').addEventListener('click', () => {
-  document.getElementById('sidebar').classList.toggle('open');
-});
-
-/* ══════════════════════════════════════
-   AUTH
-══════════════════════════════════════ */
+// ═══════════════════════════
+//  AUTH
+// ═══════════════════════════
 document.addEventListener('authChanged', e => {
   const user = e.detail;
-  const adminEls = document.querySelectorAll('.admin-only');
-  const signinBtn = document.getElementById('btn-signin');
-  const userInfo  = document.getElementById('user-info');
-
+  document.querySelectorAll('.admin-only').forEach(el => {
+    el.classList.toggle('hidden', !user);
+  });
   if (user) {
-    adminEls.forEach(el => el.classList.remove('hidden'));
-    signinBtn.classList.add('hidden');
-    userInfo.classList.remove('hidden');
-    document.getElementById('user-avatar').src = user.photoURL || '';
-    document.getElementById('user-name').textContent = user.displayName || user.email;
+    document.getElementById('btn-login').classList.add('hidden');
+    const chip = document.getElementById('user-chip');
+    chip.classList.remove('hidden');
+    document.getElementById('u-avatar').src = user.photoURL || '';
+    document.getElementById('u-name').textContent = user.displayName?.split(' ')[0] || 'Admin';
+    // Enable draw tools on map
+    enableDrawTools();
   } else {
-    adminEls.forEach(el => el.classList.add('hidden'));
-    signinBtn.classList.remove('hidden');
-    userInfo.classList.add('hidden');
+    document.getElementById('btn-login').classList.remove('hidden');
+    document.getElementById('user-chip').classList.add('hidden');
   }
 });
 
-document.getElementById('btn-signin').addEventListener('click', async () => {
-  const { auth, provider, signInWithPopup } = FB();
-  try {
-    await signInWithPopup(auth, provider);
-    toast('Signed in successfully', 'success');
-  } catch (err) {
-    toast('Sign-in failed: ' + err.message, 'error');
-  }
+document.getElementById('btn-login').addEventListener('click', async () => {
+  const { auth, prov, signInWithPopup } = fb();
+  try { await signInWithPopup(auth, prov); toast('Signed in', 'ok'); }
+  catch (err) { toast(err.message, 'err'); }
 });
-
-document.getElementById('btn-signout').addEventListener('click', async () => {
-  const { auth, signOut } = FB();
-  await signOut(auth);
+document.getElementById('btn-logout').addEventListener('click', async () => {
+  await fb().signOut(fb().auth);
   toast('Signed out');
 });
 
-/* ══════════════════════════════════════
-   LOAD DATA FROM FIREBASE (live)
-══════════════════════════════════════ */
+// ═══════════════════════════
+//  NAVIGATION
+// ═══════════════════════════
+function switchView(view) {
+  S.currentView = view;
+  document.querySelectorAll('.tnav').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+
+  // Panels
+  document.getElementById('panel-map').classList.toggle('hidden', view !== 'map');
+  document.getElementById('panel-search').classList.toggle('hidden', view !== 'search');
+  document.getElementById('panel-cemeteries').classList.toggle('hidden', view !== 'cemeteries');
+  document.getElementById('panel-admin').classList.toggle('hidden', view !== 'admin');
+
+  // Admin tools only on map view and logged in
+  const tools = document.getElementById('map-tools');
+  tools.classList.toggle('hidden', !(view === 'map' && window.__user));
+
+  // Invalidate map size when switching back to map
+  if (view === 'map' && S.MAP) setTimeout(() => S.MAP.invalidateSize(), 100);
+  if (view === 'admin') renderAdmin();
+  if (view === 'cemeteries') renderCemeteriesPanel();
+}
+
+document.querySelectorAll('.tnav').forEach(btn => {
+  btn.addEventListener('click', () => switchView(btn.dataset.view));
+});
+
+// ═══════════════════════════
+//  LOAD DATA
+// ═══════════════════════════
 function loadData() {
   dbListen('cemeteries', data => {
-    STATE.cemeteries = data || {};
-    populateCemeterySelects();
-    renderCemeteriesList();
+    S.cemeteries = data || {};
+    renderMapCemeteries();
+    renderCemListPanel();
+    populateSelects();
   });
-
   dbListen('graves', data => {
-    STATE.graves = data || {};
-    renderGravesTable();
-    updateMapMarkers();
-    renderGrid();
+    S.graves = data || {};
+    renderMapGraves();
+    if (S.currentView === 'admin') renderAdmin();
   });
-
-  dbListen('deceased', data => {
-    STATE.deceased = data || {};
+  dbListen('requests', data => {
+    S.requests = data || {};
+    const pending = Object.values(data || {}).filter(r => !r.resolved).length;
+    const badge = document.getElementById('req-badge');
+    badge.textContent = pending;
+    badge.style.display = pending ? 'inline' : 'none';
+    if (S.currentView === 'admin') renderAdmin();
   });
 }
 
-/* ══════════════════════════════════════
-   CEMETERY SELECTS – populate all
-══════════════════════════════════════ */
-function populateCemeterySelects() {
-  const selects = [
-    'filter-cemetery', 'map-cemetery-select', 'admin-cemetery-filter',
-    'stats-cemetery-select', 'gf-cemetery', 'cf-name'
-  ];
-  const cems = Object.entries(STATE.cemeteries);
-
-  ['filter-cemetery', 'map-cemetery-select', 'admin-cemetery-filter', 'stats-cemetery-select'].forEach(id => {
+// ═══════════════════════════
+//  POPULATE SELECTS
+// ═══════════════════════════
+function populateSelects() {
+  const cems = Object.entries(S.cemeteries);
+  const ids  = ['sf-cem', 'gg-cem'];
+  ids.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
     const first = el.options[0].outerHTML;
     el.innerHTML = first;
-    cems.forEach(([id2, c]) => {
-      el.innerHTML += `<option value="${id2}">${c.name}</option>`;
-    });
+    cems.forEach(([cid, c]) => el.innerHTML += `<option value="${cid}">${esc(c.name)}</option>`);
   });
 
-  const gfCem = document.getElementById('gf-cemetery');
-  if (gfCem) {
-    gfCem.innerHTML = '<option value="">Select cemetery…</option>';
-    cems.forEach(([id2, c]) => {
-      gfCem.innerHTML += `<option value="${id2}">${c.name}</option>`;
-    });
+  // City filter
+  const cities = [...new Set(Object.values(S.cemeteries).map(c => c.city).filter(Boolean))];
+  const sfCity = document.getElementById('sf-city');
+  if (sfCity) {
+    sfCity.innerHTML = '<option value="">All cities</option>';
+    cities.forEach(c => sfCity.innerHTML += `<option value="${c}">${esc(c)}</option>`);
   }
 }
 
-/* ══════════════════════════════════════
-   SEARCH
-══════════════════════════════════════ */
-const searchInput   = document.getElementById('search-input');
-const searchResults = document.getElementById('search-results');
-const searchEmpty   = document.getElementById('search-empty');
+// ═══════════════════════════
+//  MAP — CEMETERY BOUNDARIES
+// ═══════════════════════════
+function renderMapCemeteries() {
+  // Remove old
+  Object.values(S.boundaryLayers).forEach(l => S.MAP && S.MAP.removeLayer(l));
+  S.boundaryLayers = {};
 
-function doSearch() {
-  const q = searchInput.value.trim().toLowerCase();
-  const filterCem = document.getElementById('filter-cemetery').value;
-  const filterGender = document.getElementById('filter-gender').value;
-
-  if (!q) {
-    searchResults.innerHTML = '';
-    searchEmpty.classList.remove('hidden');
-    return;
-  }
-  searchEmpty.classList.add('hidden');
-
-  // Build index: graveId → deceased
-  const deceasedByGrave = {};
-  Object.entries(STATE.deceased).forEach(([did, d]) => {
-    deceasedByGrave[d.graveId] = d;
-  });
-
-  const results = [];
-
-  Object.entries(STATE.graves).forEach(([gid, g]) => {
-    if (filterCem && g.cemeteryId !== filterCem) return;
-
-    const dec = deceasedByGrave[gid];
-
-    // Match on name, father, plot
-    let matches = false;
-    if (dec) {
-      if ((dec.fullName || '').toLowerCase().includes(q)) matches = true;
-      if ((dec.fatherName || '').toLowerCase().includes(q)) matches = true;
-      if (filterGender && dec.gender !== filterGender) return;
+  Object.entries(S.cemeteries).forEach(([cid, c]) => {
+    if (c.boundary) {
+      try {
+        const coords = JSON.parse(c.boundary);
+        const layer  = L.polygon(coords, {
+          color:       '#0F1923',
+          weight:      2,
+          fillColor:   '#2ECC8A',
+          fillOpacity: 0.06,
+          dashArray:   '6 4'
+        }).addTo(S.MAP);
+        layer.bindTooltip(`<b>${esc(c.name)}</b>`, { permanent: false });
+        layer.on('click', () => flyToCemetery(cid));
+        S.boundaryLayers[cid] = layer;
+      } catch(e) {}
+    } else if (c.centerLat && c.centerLng) {
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="background:#0F1923;color:#2ECC8A;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:700;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.4)">${esc(c.name)}</div>`,
+        iconAnchor: [0, 0]
+      });
+      const m = L.marker([c.centerLat, c.centerLng], { icon }).addTo(S.MAP);
+      m.on('click', () => flyToCemetery(cid));
+      S.boundaryLayers[cid] = m;
     }
-    if (gid.toLowerCase().includes(q)) matches = true;
-    if ((g.plot || '').toLowerCase().includes(q)) matches = true;
-
-    if (matches) results.push({ gid, g, dec });
   });
+}
 
-  if (results.length === 0) {
-    searchResults.innerHTML = '<p style="color:var(--text-muted);padding:1rem">No graves found matching your search.</p>';
-    return;
+// ═══════════════════════════
+//  MAP — GRAVES AS POLYGONS
+// ═══════════════════════════
+const STATUS_COLOR = { occupied: '#E05A5A', empty: '#2ECC8A', reserved: '#F0B429' };
+
+function renderMapGraves() {
+  Object.values(S.graveLayers).forEach(l => S.MAP && S.MAP.removeLayer(l));
+  S.graveLayers = {};
+
+  Object.entries(S.graves).forEach(([gid, g]) => {
+    if (!g.polygon) return;
+    try {
+      const coords = JSON.parse(g.polygon);
+      const color  = STATUS_COLOR[g.status] || '#9CA3AF';
+      const layer  = L.polygon(coords, {
+        color:       '#fff',
+        weight:      1,
+        fillColor:   color,
+        fillOpacity: 0.8,
+      }).addTo(S.MAP);
+
+      const name = g.name || 'Empty plot';
+      layer.bindTooltip(`<b>${esc(name)}</b><br>${esc(g.fatherName ? 's/o ' + g.fatherName : '')}`, { sticky: true });
+      layer.on('click', () => openGraveDetail(gid));
+      S.graveLayers[gid] = layer;
+    } catch(e) {}
+  });
+}
+
+function flyToCemetery(cemId) {
+  S.selectedCemId = cemId;
+  const c = S.cemeteries[cemId];
+  if (!c) return;
+
+  // Highlight in left panel
+  document.querySelectorAll('.cem-list-item').forEach(el => el.classList.remove('active'));
+  document.querySelector(`.cem-list-item[data-cem-id="${cemId}"]`)?.classList.add('active');
+
+  if (S.boundaryLayers[cemId]) {
+    const bounds = S.boundaryLayers[cemId].getBounds ? S.boundaryLayers[cemId].getBounds() : null;
+    if (bounds) { S.MAP.fitBounds(bounds, { padding: [60, 60] }); return; }
   }
+  if (c.centerLat && c.centerLng) S.MAP.flyTo([c.centerLat, c.centerLng], 17);
+}
 
-  searchResults.innerHTML = results.map(({ gid, g, dec }) => {
-    const cem = STATE.cemeteries[g.cemeteryId] || {};
-    const name = dec ? dec.fullName : 'Unknown';
-    const father = dec ? dec.fatherName : '';
-    const dod = dec ? (dec.deathDate || '') : '';
-    return `
-      <div class="grave-card" data-status="${g.status}" onclick="openGraveDetail('${gid}')">
-        <div class="grave-card-name">${esc(name)}</div>
-        ${father ? `<div class="grave-card-father">s/o ${esc(father)}</div>` : ''}
-        <div class="grave-card-meta">
-          <span class="meta-tag">📍 ${esc(cem.name || 'Unknown')}</span>
-          <span class="meta-tag">§${esc(g.section || '')} R${esc(g.row || '')} P${esc(g.plot || '')}</span>
-          ${dod ? `<span class="meta-tag">✝ ${dod}</span>` : ''}
-          <span class="status-badge ${g.status}">${g.status}</span>
-        </div>
-      </div>`;
+// ═══════════════════════════
+//  LEFT PANEL — CEM LIST
+// ═══════════════════════════
+function renderCemListPanel() {
+  const el  = document.getElementById('map-cem-list');
+  const cems = Object.entries(S.cemeteries);
+  if (!cems.length) { el.innerHTML = '<div style="padding:1rem;color:#9CA3AF;font-size:.82rem">No cemeteries yet.</div>'; return; }
+
+  el.innerHTML = cems.map(([cid, c]) => {
+    const graves    = Object.values(S.graves).filter(g => g.cemeteryId === cid);
+    const total     = graves.length;
+    const occupied  = graves.filter(g => g.status === 'occupied').length;
+    return `<div class="cem-list-item" data-cem-id="${cid}" onclick="flyToCemetery('${cid}')">
+      <div class="cem-list-dot"></div>
+      <div class="cem-list-info">
+        <div class="cem-list-name">${esc(c.name)}</div>
+        <div class="cem-list-loc">${[c.city, c.country].filter(Boolean).map(esc).join(', ')}</div>
+      </div>
+      <div class="cem-list-count">${occupied}/${total}</div>
+    </div>`;
   }).join('');
 }
 
-searchInput.addEventListener('input', doSearch);
-document.getElementById('filter-cemetery').addEventListener('change', doSearch);
-document.getElementById('filter-gender').addEventListener('change', doSearch);
-document.getElementById('btn-search-clear').addEventListener('click', () => {
-  searchInput.value = '';
-  doSearch();
+// Filter
+document.getElementById('map-cem-search').addEventListener('input', function() {
+  const q = this.value.toLowerCase();
+  document.querySelectorAll('.cem-list-item').forEach(el => {
+    el.classList.toggle('hidden', !el.textContent.toLowerCase().includes(q));
+  });
 });
 
-/* ══════════════════════════════════════
-   GRAVE DETAIL MODAL
-══════════════════════════════════════ */
-function openGraveDetail(graveId) {
-  const g   = STATE.graves[graveId];
-  const cem = STATE.cemeteries[g?.cemeteryId] || {};
+// ═══════════════════════════
+//  DRAW TOOLS
+// ═══════════════════════════
+function enableDrawTools() {
+  if (!S.MAP) return;
 
-  // Find deceased
-  const dec = Object.values(STATE.deceased).find(d => d.graveId === graveId);
+  document.getElementById('tool-draw-boundary').addEventListener('click', () => {
+    if (!S.selectedCemId) { toast('Select a cemetery first from the left panel', 'err'); return; }
+    setHint('Click points to draw the cemetery boundary. Double-click to finish.');
+    S.MAP.pm.enableDraw('Polygon', { snappable: false });
+    setActiveTool('tool-draw-boundary');
+  });
 
-  const name   = dec ? dec.fullName    : 'Empty Grave';
-  const father = dec ? dec.fatherName  : '';
-  const gender = dec ? dec.gender      : '';
-  const dob    = dec ? (dec.birthDate  || '–') : '–';
-  const dod    = dec ? (dec.deathDate  || '–') : '–';
-  const burial = dec ? (dec.burialDate || '–') : '–';
-  const bio    = dec ? (dec.bio        || '')  : '';
+  document.getElementById('tool-draw-grave').addEventListener('click', () => {
+    if (!S.selectedCemId) { toast('Select a cemetery first from the left panel', 'err'); return; }
+    setHint('Drag to draw a grave rectangle.');
+    S.MAP.pm.enableDraw('Rectangle', { snappable: false });
+    setActiveTool('tool-draw-grave');
+  });
 
-  const pageUrl = `${location.href.split('?')[0]}?grave=${graveId}`;
+  document.getElementById('tool-gen-grid').addEventListener('click', () => {
+    if (!S.selectedCemId) { toast('Select a cemetery first', 'err'); return; }
+    document.getElementById('gg-cem').value = S.selectedCemId;
+    openOverlay('ov-grid-gen');
+  });
 
-  const isAdmin = !!window.__currentUser;
+  document.getElementById('tool-delete').addEventListener('click', () => {
+    S.MAP.pm.enableGlobalRemovalMode();
+    setHint('Click a shape to delete it.');
+  });
 
-  document.getElementById('grave-detail-content').innerHTML = `
-    <div class="grave-detail-header">
-      <div class="grave-detail-icon">${gender === 'female' ? '👩' : '👤'}</div>
-      <div>
-        <h2>${esc(name)}</h2>
-        ${father ? `<div class="father">Son/Daughter of ${esc(father)}</div>` : ''}
-        <span class="status-badge ${g.status}" style="margin-top:0.4rem;display:inline-block">${g.status}</span>
-      </div>
-    </div>
+  // Handle drawn shapes
+  S.MAP.on('pm:create', async e => {
+    const layer = e.layer;
+    const type  = activeTool;
 
-    <div class="detail-grid">
-      <div class="detail-item"><label>Cemetery</label><p>${esc(cem.name || '–')}</p></div>
-      <div class="detail-item"><label>Section / Row / Plot</label><p>${esc(g.section || '–')} / ${esc(g.row || '–')} / ${esc(g.plot || '–')}</p></div>
-      <div class="detail-item"><label>Date of Birth</label><p>${esc(dob)}</p></div>
-      <div class="detail-item"><label>Date of Death</label><p>${esc(dod)}</p></div>
-      <div class="detail-item"><label>Burial Date</label><p>${esc(burial)}</p></div>
-      <div class="detail-item"><label>Gender</label><p>${esc(gender || '–')}</p></div>
-    </div>
-
-    ${bio ? `<div style="background:var(--stone-light);border-radius:var(--radius);padding:1rem;margin-bottom:1rem;font-size:0.88rem;line-height:1.6;color:var(--text)">${esc(bio)}</div>` : ''}
-
-    ${(g.latitude && g.longitude) ? `
-      <div class="grave-detail-map" id="detail-mini-map"></div>
-    ` : ''}
-
-    <div style="margin-bottom:1.25rem">
-      <div style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.75rem">Timeline</div>
-      <div class="timeline">
-        ${burial ? `<div class="timeline-item"><div class="timeline-date">${esc(burial)}</div><div class="timeline-label">Burial</div></div>` : ''}
-        ${dod ? `<div class="timeline-item"><div class="timeline-date">${esc(dod)}</div><div class="timeline-label">Passed Away</div></div>` : ''}
-        <div class="timeline-item"><div class="timeline-date">Registered</div><div class="timeline-label">Grave Record Created</div></div>
-      </div>
-    </div>
-
-    <div style="margin-bottom:1.25rem">
-      <div style="font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.75rem">QR Code</div>
-      <div id="qr-container"></div>
-    </div>
-
-    <div class="grave-detail-actions">
-      ${(g.latitude && g.longitude) ? `
-        <button class="btn-navigate" onclick="navigateToGrave(${g.latitude},${g.longitude})">🧭 Navigate</button>
-      ` : ''}
-      ${isAdmin ? `<button class="btn-primary" onclick="editGrave('${graveId}')">Edit Grave</button>` : ''}
-    </div>
-  `;
-
-  openModal('modal-grave-detail');
-
-  // Mini map
-  if (g.latitude && g.longitude) {
-    setTimeout(() => {
-      const miniMap = L.map('detail-mini-map', { zoomControl: false, dragging: false }).setView([g.latitude, g.longitude], 17);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap'
-      }).addTo(miniMap);
-      const icon = L.divIcon({ className: '', html: markerHtml(g.status), iconSize: [20, 20], iconAnchor: [10, 10] });
-      L.marker([g.latitude, g.longitude], { icon }).addTo(miniMap);
-    }, 100);
-  }
-
-  // QR code
-  setTimeout(() => {
-    const qrEl = document.getElementById('qr-container');
-    if (qrEl) {
-      new QRCode(qrEl, { text: pageUrl, width: 100, height: 100 });
+    if (type === 'tool-draw-boundary') {
+      // Save as cemetery boundary
+      const coords = layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+      await dbUpdate(`cemeteries/${S.selectedCemId}`, { boundary: JSON.stringify(coords) });
+      S.MAP.removeLayer(layer);
+      toast('Cemetery boundary saved!', 'ok');
+      setActiveTool(null);
+    } else if (type === 'tool-draw-grave') {
+      // Open grave wizard with pre-filled cemetery & polygon
+      const coords = layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+      S.MAP.removeLayer(layer);
+      // Set pre-selected cemetery and drawn polygon
+      S.graveWizardData = { cemId: S.selectedCemId, polygon: JSON.stringify(coords) };
+      openGraveWizard(true);
+      setActiveTool(null);
     }
-  }, 100);
-}
 
-function navigateToGrave(lat, lng) {
-  window.open(`https://www.openstreetmap.org/directions?from=&to=${lat},${lng}`, '_blank');
-}
-
-/* ══════════════════════════════════════
-   LEAFLET MAP
-══════════════════════════════════════ */
-function initMapPage() {
-  if (!STATE.leafletMap) {
-    const defaultCenter = [30.3753, 69.3451]; // Pakistan center
-    STATE.leafletMap = L.map('leaflet-map').setView(defaultCenter, 6);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© <a href="https://www.openstreetmap.org">OpenStreetMap</a>',
-      maxZoom: 20
-    }).addTo(STATE.leafletMap);
-  }
-  updateMapMarkers();
-  renderGrid();
-}
-
-function markerHtml(status) {
-  const colors = { occupied: '#B5655A', empty: '#6B8F71', reserved: '#D4A843' };
-  const c = colors[status] || '#6B7A8A';
-  return `<div style="width:16px;height:16px;background:${c};border:2px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.4)"></div>`;
-}
-
-function updateMapMarkers() {
-  if (!STATE.leafletMap) return;
-
-  const filterCem = document.getElementById('map-cemetery-select')?.value || '';
-
-  // Clear old markers
-  Object.values(STATE.leafletMarkers).forEach(m => STATE.leafletMap.removeLayer(m));
-  STATE.leafletMarkers = {};
-
-  const deceasedByGrave = {};
-  Object.values(STATE.deceased).forEach(d => { deceasedByGrave[d.graveId] = d; });
-
-  const coords = [];
-
-  Object.entries(STATE.graves).forEach(([gid, g]) => {
-    if (filterCem && g.cemeteryId !== filterCem) return;
-    if (!g.latitude || !g.longitude) return;
-
-    const dec = deceasedByGrave[gid];
-    const name = dec ? dec.fullName : 'Empty';
-    const cem = STATE.cemeteries[g.cemeteryId] || {};
-
-    const icon = L.divIcon({
-      className: '',
-      html: markerHtml(g.status),
-      iconSize: [16, 16], iconAnchor: [8, 8]
-    });
-
-    const marker = L.marker([g.latitude, g.longitude], { icon })
-      .addTo(STATE.leafletMap)
-      .bindPopup(`<b>${name}</b><br>${cem.name || ''}<br>§${g.section} R${g.row} P${g.plot}<br>
-        <a href="#" onclick="openGraveDetail('${gid}');return false">View Details →</a>`);
-
-    STATE.leafletMarkers[gid] = marker;
-    coords.push([g.latitude, g.longitude]);
-  });
-
-  if (coords.length > 0) {
-    STATE.leafletMap.fitBounds(coords, { padding: [40, 40] });
-  }
-
-  // Also show cemetery markers
-  Object.entries(STATE.cemeteries).forEach(([cid, c]) => {
-    if (filterCem && cid !== filterCem) return;
-    if (!c.latitude || !c.longitude) return;
-    const icon = L.divIcon({
-      className: '',
-      html: `<div style="background:var(--slate,#1C2B3A);color:#C9A84C;border-radius:4px;padding:2px 6px;font-size:10px;font-weight:700;white-space:nowrap;box-shadow:0 2px 4px rgba(0,0,0,0.3)">${c.name}</div>`,
-      iconAnchor: [0, 0]
-    });
-    L.marker([c.latitude, c.longitude], { icon }).addTo(STATE.leafletMap);
+    S.MAP.pm.disableDraw();
+    setHint('');
   });
 }
 
-document.getElementById('map-cemetery-select')?.addEventListener('change', () => {
-  updateMapMarkers();
-  renderGrid();
+let activeTool = null;
+function setActiveTool(id) {
+  activeTool = id;
+  document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+  if (id) document.getElementById(id)?.classList.add('active');
+}
+function setHint(msg) {
+  document.getElementById('tool-hint').textContent = msg;
+}
+
+// ═══════════════════════════
+//  CEMETERY WIZARD
+// ═══════════════════════════
+let cemWizardStep = 1;
+
+document.getElementById('btn-add-cemetery')?.addEventListener('click', () => {
+  S.cemWizardData = {};
+  cemWizardStep = 1;
+  showCemWizardStep(1);
+  openOverlay('ov-add-cem');
 });
 
-/* ══════════════════════════════════════
-   GRID MAP
-══════════════════════════════════════ */
-function renderGrid() {
-  const gridEl = document.getElementById('grid-map');
-  if (!gridEl) return;
-
-  const filterCem = document.getElementById('map-cemetery-select')?.value || '';
-
-  // Group graves by cemetery → section → row
-  const tree = {};
-  Object.entries(STATE.graves).forEach(([gid, g]) => {
-    if (filterCem && g.cemeteryId !== filterCem) return;
-    const cemName = (STATE.cemeteries[g.cemeteryId] || {}).name || g.cemeteryId;
-    if (!tree[cemName]) tree[cemName] = {};
-    const sec = g.section || 'A';
-    if (!tree[cemName][sec]) tree[cemName][sec] = {};
-    const row = g.row || '1';
-    if (!tree[cemName][sec][row]) tree[cemName][sec][row] = [];
-    tree[cemName][sec][row].push({ gid, g });
+function showCemWizardStep(n) {
+  [1,2,3].forEach(i => {
+    document.getElementById(`cem-step-${i}`).classList.toggle('active', i === n);
+    const ws = document.querySelector(`.wstep[data-step="${i}"]`);
+    ws.classList.toggle('active', i === n);
+    ws.classList.toggle('done', i < n);
   });
-
-  if (Object.keys(tree).length === 0) {
-    gridEl.innerHTML = '<p style="color:var(--text-muted);font-size:.85rem;padding:.5rem">No graves to display. Select a cemetery or add graves.</p>';
-    return;
-  }
-
-  let html = '';
-  Object.entries(tree).forEach(([cemName, sections]) => {
-    html += `<div style="font-size:.7rem;font-weight:700;color:var(--slate);margin-bottom:.5rem;text-transform:uppercase;letter-spacing:.06em">${esc(cemName)}</div>`;
-    Object.entries(sections).forEach(([sec, rows]) => {
-      html += `<div class="grid-section">
-        <div class="grid-section-label">Section ${esc(sec)}</div>`;
-      Object.entries(rows).sort(([a],[b]) => a.localeCompare(b,undefined,{numeric:true})).forEach(([row, plots]) => {
-        html += `<div class="grid-row">
-          <div class="grid-row-label">${esc(row)}</div>`;
-        plots.forEach(({ gid, g }) => {
-          const dec = Object.values(STATE.deceased).find(d => d.graveId === gid);
-          const tip = dec ? dec.fullName : `P${g.plot}`;
-          html += `<div class="grid-cell ${g.status}" title="${esc(tip)} – ${g.status}" onclick="openGraveDetail('${gid}')"></div>`;
-        });
-        html += `</div>`;
-      });
-      html += `</div>`;
-    });
-  });
-
-  gridEl.innerHTML = html;
+  if (n === 2) setTimeout(() => initLocateMap(), 200);
+  if (n === 3) setTimeout(() => initBoundaryMap(), 200);
 }
 
-/* ══════════════════════════════════════
-   CEMETERIES LIST
-══════════════════════════════════════ */
-function renderCemeteriesList() {
-  const el = document.getElementById('cemeteries-list');
-  if (!el) return;
+window.cemWizardNext = function(step) {
+  if (step === 1) {
+    const name = document.getElementById('cw-name').value.trim();
+    if (!name) { toast('Cemetery name is required', 'err'); return; }
+    S.cemWizardData.name     = name;
+    S.cemWizardData.country  = document.getElementById('cw-country').value.trim();
+    S.cemWizardData.province = document.getElementById('cw-province').value.trim();
+    S.cemWizardData.district = document.getElementById('cw-district').value.trim();
+    S.cemWizardData.city     = document.getElementById('cw-city').value.trim();
+    S.cemWizardData.address  = document.getElementById('cw-address').value.trim();
+    S.cemWizardData.description = document.getElementById('cw-desc').value.trim();
+  }
+  if (step === 2) {
+    const lat = parseFloat(document.getElementById('cw-lat').value);
+    const lng = parseFloat(document.getElementById('cw-lng').value);
+    if (!lat || !lng) { toast('Click on the map to set cemetery location', 'err'); return; }
+    S.cemWizardData.centerLat = lat;
+    S.cemWizardData.centerLng = lng;
+  }
+  showCemWizardStep(step + 1);
+};
 
-  const cems = Object.entries(STATE.cemeteries);
-  if (cems.length === 0) {
-    el.innerHTML = '<p style="color:var(--text-muted)">No cemeteries registered yet.</p>';
+window.cemWizardBack = function(step) {
+  showCemWizardStep(step - 1);
+};
+
+function initLocateMap() {
+  if (S.locateMap) { S.locateMap.invalidateSize(); return; }
+  S.locateMap = L.map('cem-locate-map').setView([30.3753, 69.3451], 5);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '© OSM © CARTO', subdomains: 'abcd', maxZoom: 20
+  }).addTo(S.locateMap);
+
+  S.locateMap.on('click', e => {
+    if (S.locateMarker) S.locateMap.removeLayer(S.locateMarker);
+    S.locateMarker = L.marker(e.latlng).addTo(S.locateMap);
+    document.getElementById('cw-lat').value = e.latlng.lat.toFixed(6);
+    document.getElementById('cw-lng').value = e.latlng.lng.toFixed(6);
+  });
+}
+
+document.getElementById('cw-loc-search').addEventListener('keydown', async e => {
+  if (e.key !== 'Enter') return;
+  const q = e.target.value.trim();
+  if (!q) return;
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`);
+  const data = await res.json();
+  if (!data.length) { toast('Location not found', 'err'); return; }
+  const { lat, lon } = data[0];
+  S.locateMap.flyTo([lat, lon], 14);
+  if (S.locateMarker) S.locateMap.removeLayer(S.locateMarker);
+  S.locateMarker = L.marker([lat, lon]).addTo(S.locateMap);
+  document.getElementById('cw-lat').value = parseFloat(lat).toFixed(6);
+  document.getElementById('cw-lng').value = parseFloat(lon).toFixed(6);
+});
+
+function initBoundaryMap() {
+  const center = S.cemWizardData.centerLat
+    ? [S.cemWizardData.centerLat, S.cemWizardData.centerLng]
+    : [30.3753, 69.3451];
+
+  if (S.boundaryMap) {
+    S.boundaryMap.setView(center, 17);
+    S.boundaryMap.invalidateSize();
     return;
   }
 
-  el.innerHTML = cems.map(([cid, c]) => {
-    const graves = Object.values(STATE.graves).filter(g => g.cemeteryId === cid);
-    const total    = graves.length;
-    const occupied = graves.filter(g => g.status === 'occupied').length;
-    const avail    = graves.filter(g => g.status === 'empty').length;
+  S.boundaryMap = L.map('cem-boundary-map').setView(center, 17);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '© OSM © CARTO', subdomains: 'abcd', maxZoom: 20
+  }).addTo(S.boundaryMap);
 
-    return `<div class="cemetery-card">
-      <h3>${esc(c.name)}</h3>
-      <div class="location">📍 ${[c.city, c.province, c.country].filter(Boolean).map(esc).join(', ')}</div>
-      ${c.description ? `<div class="desc">${esc(c.description)}</div>` : ''}
-      <div class="cemetery-card-footer">
-        <div class="cemetery-stats-mini">
-          <div class="stat-mini"><span class="val">${total}</span><span class="lbl">Total</span></div>
-          <div class="stat-mini"><span class="val" style="color:var(--rose)">${occupied}</span><span class="lbl">Occupied</span></div>
-          <div class="stat-mini"><span class="val" style="color:var(--sage)">${avail}</span><span class="lbl">Available</span></div>
-        </div>
-        <button class="btn-view-map" onclick="viewCemeteryMap('${cid}')">View Map</button>
+  S.boundaryMap.pm.addControls({
+    position: 'topleft',
+    drawMarker: false, drawCircle: false, drawCircleMarker: false,
+    drawPolyline: false, drawText: false, drawRectangle: false,
+    drawPolygon: true, editMode: true, dragMode: false,
+    cutPolygon: false, removalMode: true,
+  });
+
+  S.boundaryMap.on('pm:create', e => {
+    if (S.boundaryDrawn) S.boundaryMap.removeLayer(S.boundaryDrawn);
+    S.boundaryDrawn = e.layer;
+    const coords = e.layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+    S.cemWizardData.boundary = JSON.stringify(coords);
+    const status = document.getElementById('boundary-status');
+    status.textContent = `✓ Boundary drawn with ${coords.length} points.`;
+    status.className = 'boundary-status ok';
+  });
+
+  S.boundaryMap.on('pm:remove', () => {
+    S.boundaryDrawn = null;
+    S.cemWizardData.boundary = null;
+    document.getElementById('boundary-status').textContent = 'No boundary drawn yet.';
+    document.getElementById('boundary-status').className = 'boundary-status';
+  });
+}
+
+document.getElementById('btn-save-cemetery').addEventListener('click', async () => {
+  const d = S.cemWizardData;
+  if (!d.name) { toast('Go back and fill cemetery name', 'err'); return; }
+  try {
+    await dbPush('cemeteries', { ...d, createdAt: Date.now() });
+    toast('Cemetery saved!', 'ok');
+    closeOverlay('ov-add-cem');
+    // Reset wizard
+    S.cemWizardData = {};
+    S.boundaryDrawn = null;
+    if (S.boundaryMap) { S.boundaryMap.remove(); S.boundaryMap = null; }
+    if (S.locateMap)   { S.locateMap.remove(); S.locateMap = null; }
+  } catch(err) { toast(err.message, 'err'); }
+});
+
+// ═══════════════════════════
+//  GRAVE WIZARD
+// ═══════════════════════════
+function openGraveWizard(skipToStep3 = false) {
+  if (!skipToStep3) S.graveWizardData = {};
+  showGraveWizardStep(skipToStep3 ? 3 : 1);
+  openOverlay('ov-add-grave');
+}
+
+function showGraveWizardStep(n) {
+  [1,2,3].forEach(i => {
+    document.getElementById(`gw-step-${i}`).classList.toggle('active', i === n);
+    const ws = document.querySelector(`#ov-add-grave .wstep[data-step="${i}"]`);
+    ws.classList.toggle('active', i === n);
+    ws.classList.toggle('done', i < n);
+  });
+  if (n === 2) renderGraveCemOptions();
+  if (n === 3) setTimeout(() => initGraveDrawMap(), 200);
+}
+
+window.graveWizardNext = function(step) {
+  if (step === 1) {
+    const name = document.getElementById('gw-name').value.trim();
+    if (!name) { toast('Name is required', 'err'); return; }
+    S.graveWizardData.name      = name;
+    S.graveWizardData.fatherName= document.getElementById('gw-father').value.trim();
+    S.graveWizardData.gender    = document.getElementById('gw-gender').value;
+    S.graveWizardData.dob       = document.getElementById('gw-dob').value;
+    S.graveWizardData.dod       = document.getElementById('gw-dod').value;
+    S.graveWizardData.burialDate= document.getElementById('gw-burial').value;
+    S.graveWizardData.section   = document.getElementById('gw-section').value.trim();
+    S.graveWizardData.row       = document.getElementById('gw-row').value.trim();
+    S.graveWizardData.plot      = document.getElementById('gw-plot').value.trim();
+    S.graveWizardData.bio       = document.getElementById('gw-bio').value.trim();
+    S.graveWizardData.status    = document.getElementById('gw-status').value;
+    // Auto-calc age
+    if (S.graveWizardData.dob && S.graveWizardData.dod) {
+      const age = Math.floor((new Date(S.graveWizardData.dod) - new Date(S.graveWizardData.dob)) / (365.25*24*3600*1000));
+      S.graveWizardData.age = age > 0 ? age : null;
+    } else {
+      S.graveWizardData.age = parseInt(document.getElementById('gw-age').value) || null;
+    }
+  }
+  if (step === 2) {
+    if (!S.graveWizardData.cemId) { toast('Select a cemetery', 'err'); return; }
+  }
+  showGraveWizardStep(step + 1);
+};
+
+window.graveWizardBack = function(step) {
+  showGraveWizardStep(step - 1);
+};
+
+function renderGraveCemOptions() {
+  const el = document.getElementById('gw-cem-options');
+  const cems = Object.entries(S.cemeteries);
+  el.innerHTML = cems.map(([cid, c]) => `
+    <div class="cem-radio ${S.graveWizardData.cemId === cid ? 'selected' : ''}" onclick="selectGraveCem('${cid}')">
+      <div>
+        <div class="cem-radio-name">${esc(c.name)}</div>
+        <div class="cem-radio-loc">${[c.city, c.country].filter(Boolean).map(esc).join(', ')}</div>
+      </div>
+    </div>`).join('');
+}
+
+window.selectGraveCem = function(cemId) {
+  S.graveWizardData.cemId = cemId;
+  document.querySelectorAll('.cem-radio').forEach(el => el.classList.remove('selected'));
+  document.querySelectorAll('.cem-radio').forEach(el => {
+    if (el.textContent.includes(S.cemeteries[cemId]?.name)) el.classList.add('selected');
+  });
+};
+
+function initGraveDrawMap() {
+  const cem    = S.cemeteries[S.graveWizardData.cemId] || {};
+  const center = cem.centerLat ? [cem.centerLat, cem.centerLng] : [30.3753, 69.3451];
+
+  if (S.graveDrawMap) {
+    S.graveDrawMap.setView(center, 19);
+    S.graveDrawMap.invalidateSize();
+    // If polygon already set from main map drawing, show it
+    if (S.graveWizardData.polygon && !S.graveDrawn) {
+      try {
+        const coords = JSON.parse(S.graveWizardData.polygon);
+        S.graveDrawn = L.polygon(coords, { color:'#E05A5A', fillOpacity:.5 }).addTo(S.graveDrawMap);
+        const status = document.getElementById('grave-draw-status');
+        status.textContent = '✓ Grave location set from map drawing.';
+        status.className = 'boundary-status ok';
+        S.graveDrawMap.fitBounds(S.graveDrawn.getBounds(), { padding: [40,40] });
+      } catch(e) {}
+    }
+    return;
+  }
+
+  S.graveDrawMap = L.map('gw-draw-map').setView(center, 19);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '© OSM © CARTO', subdomains: 'abcd', maxZoom: 21
+  }).addTo(S.graveDrawMap);
+
+  // Show cemetery boundary if exists
+  const cemData = S.cemeteries[S.graveWizardData.cemId];
+  if (cemData?.boundary) {
+    try {
+      const coords = JSON.parse(cemData.boundary);
+      L.polygon(coords, { color:'#0F1923', weight:2, fillOpacity:.04, dashArray:'6 4' }).addTo(S.graveDrawMap);
+      S.graveDrawMap.fitBounds(L.polygon(coords).getBounds(), { padding:[20,20] });
+    } catch(e) {}
+  }
+
+  // Show existing graves
+  Object.entries(S.graves).filter(([,g]) => g.cemeteryId === S.graveWizardData.cemId).forEach(([,g]) => {
+    if (!g.polygon) return;
+    try {
+      const coords = JSON.parse(g.polygon);
+      L.polygon(coords, { color:'#fff', weight:1, fillColor: STATUS_COLOR[g.status]||'#9CA3AF', fillOpacity:.7 }).addTo(S.graveDrawMap);
+    } catch(e) {}
+  });
+
+  S.graveDrawMap.pm.addControls({
+    position: 'topleft',
+    drawMarker:false, drawCircle:false, drawCircleMarker:false,
+    drawPolyline:false, drawText:false, drawPolygon:false,
+    drawRectangle:true, editMode:true, dragMode:false,
+    cutPolygon:false, removalMode:true,
+  });
+
+  S.graveDrawMap.on('pm:create', e => {
+    if (S.graveDrawn) S.graveDrawMap.removeLayer(S.graveDrawn);
+    S.graveDrawn = e.layer;
+    const coords = e.layer.getLatLngs()[0].map(ll => [ll.lat, ll.lng]);
+    S.graveWizardData.polygon = JSON.stringify(coords);
+    const center  = e.layer.getBounds().getCenter();
+    S.graveWizardData.lat = center.lat;
+    S.graveWizardData.lng = center.lng;
+    const status = document.getElementById('grave-draw-status');
+    status.textContent = '✓ Grave location drawn.';
+    status.className = 'boundary-status ok';
+  });
+
+  // Pre-fill if polygon already set
+  if (S.graveWizardData.polygon) {
+    try {
+      const coords = JSON.parse(S.graveWizardData.polygon);
+      S.graveDrawn = L.polygon(coords, { color:'#E05A5A', fillOpacity:.5 }).addTo(S.graveDrawMap);
+      S.graveDrawMap.fitBounds(S.graveDrawn.getBounds(), { padding:[40,40] });
+      document.getElementById('grave-draw-status').textContent = '✓ Grave location set.';
+      document.getElementById('grave-draw-status').className = 'boundary-status ok';
+    } catch(e) {}
+  }
+}
+
+document.getElementById('btn-save-grave').addEventListener('click', async () => {
+  const d = S.graveWizardData;
+  if (!d.name)   { toast('Go back and fill person name', 'err'); return; }
+  if (!d.cemId)  { toast('Go back and select a cemetery', 'err'); return; }
+  if (!d.polygon) { toast('Draw the grave location on the map', 'err'); return; }
+
+  const graveData = {
+    cemeteryId:  d.cemId,
+    name:        d.name,
+    fatherName:  d.fatherName || null,
+    gender:      d.gender     || null,
+    dob:         d.dob        || null,
+    deathDate:   d.dod        || null,
+    burialDate:  d.burialDate || null,
+    age:         d.age        || null,
+    section:     d.section    || null,
+    row:         d.row        || null,
+    plot:        d.plot       || null,
+    bio:         d.bio        || null,
+    status:      d.status     || 'occupied',
+    polygon:     d.polygon,
+    lat:         d.lat        || null,
+    lng:         d.lng        || null,
+    createdAt:   Date.now()
+  };
+
+  try {
+    await dbPush('graves', graveData);
+    toast('Grave registered!', 'ok');
+    closeOverlay('ov-add-grave');
+    S.graveWizardData = {};
+    S.graveDrawn = null;
+    if (S.graveDrawMap) { S.graveDrawMap.remove(); S.graveDrawMap = null; }
+    // Fly to grave on main map
+    if (d.cemId) flyToCemetery(d.cemId);
+  } catch(err) { toast(err.message, 'err'); }
+});
+
+// ═══════════════════════════
+//  GENERATE GRAVE GRID
+// ═══════════════════════════
+function metersToLatLng(lat, meters) {
+  return meters / 111320;
+}
+function metersToLng(lat, meters) {
+  return meters / (111320 * Math.cos(lat * Math.PI / 180));
+}
+
+window.previewGrid = function() {
+  const cemId = document.getElementById('gg-cem').value;
+  const c     = S.cemeteries[cemId];
+  if (!cemId || !c?.boundary) { toast('Select a cemetery with a drawn boundary', 'err'); return; }
+
+  const w   = parseFloat(document.getElementById('gg-w').value)   || 2;
+  const l   = parseFloat(document.getElementById('gg-l').value)   || 3;
+  const gap = parseFloat(document.getElementById('gg-gap').value) || 0.5;
+
+  const cells = computeGrid(c, w, l, gap);
+  document.getElementById('gg-preview-info').innerHTML =
+    `<b>Preview:</b> ~${cells.length} grave plots will be generated inside the boundary.`;
+};
+
+function computeGrid(c, graveW, graveL, gap) {
+  let boundaryCoords;
+  try { boundaryCoords = JSON.parse(c.boundary); } catch(e) { return []; }
+  if (!boundaryCoords?.length) return [];
+
+  const lats = boundaryCoords.map(p => p[0]);
+  const lngs = boundaryCoords.map(p => p[1]);
+  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
+  const centerLat = (minLat + maxLat) / 2;
+
+  const dLat = metersToLatLng(centerLat, graveL + gap);
+  const dLng = metersToLng(centerLat, graveW + gap);
+  const gLat = metersToLatLng(centerLat, graveL);
+  const gLng = metersToLng(centerLat, graveW);
+
+  const boundary = L.polygon(boundaryCoords);
+  const cells = [];
+
+  let lat = minLat + metersToLatLng(centerLat, gap);
+  while (lat + gLat < maxLat) {
+    let lng = minLng + metersToLng(centerLat, gap);
+    while (lng + gLng < maxLng) {
+      const cellCenter = L.latLng(lat + gLat / 2, lng + gLng / 2);
+      if (boundary.getBounds().contains(cellCenter)) {
+        // Simple point-in-polygon check using leaflet
+        cells.push([
+          [lat, lng], [lat + gLat, lng],
+          [lat + gLat, lng + gLng], [lat, lng + gLng]
+        ]);
+      }
+      lng += dLng;
+    }
+    lat += dLat;
+  }
+  return cells;
+}
+
+document.getElementById('btn-gen-grid').addEventListener('click', async () => {
+  const cemId = document.getElementById('gg-cem').value;
+  const c     = S.cemeteries[cemId];
+  if (!cemId || !c?.boundary) { toast('Select a cemetery with a drawn boundary', 'err'); return; }
+
+  const w   = parseFloat(document.getElementById('gg-w').value)   || 2;
+  const l   = parseFloat(document.getElementById('gg-l').value)   || 3;
+  const gap = parseFloat(document.getElementById('gg-gap').value) || 0.5;
+
+  const cells = computeGrid(c, w, l, gap);
+  if (!cells.length) { toast('No cells generated — check boundary', 'err'); return; }
+  if (!confirm(`Generate ${cells.length} empty grave plots inside ${c.name}? This may take a moment.`)) return;
+
+  toast(`Generating ${cells.length} graves…`);
+
+  let count = 0;
+  for (const coords of cells) {
+    const center = [(coords[0][0]+coords[2][0])/2, (coords[0][1]+coords[2][1])/2];
+    await dbPush('graves', {
+      cemeteryId: cemId,
+      status:     'empty',
+      name:       null,
+      polygon:    JSON.stringify(coords),
+      lat:        center[0],
+      lng:        center[1],
+      section:    null, row: null, plot: `${++count}`,
+      createdAt:  Date.now()
+    });
+  }
+
+  toast(`${count} grave plots generated!`, 'ok');
+  closeOverlay('ov-grid-gen');
+  flyToCemetery(cemId);
+});
+
+// ═══════════════════════════
+//  SEARCH
+// ═══════════════════════════
+function doSearch() {
+  const q     = (document.getElementById('search-q')?.value || '').trim().toLowerCase();
+  const fCem  = document.getElementById('sf-cem')?.value    || '';
+  const fCity = document.getElementById('sf-city')?.value   || '';
+  const fGen  = document.getElementById('sf-gender')?.value || '';
+  const hint  = document.getElementById('search-empty');
+  const grid  = document.getElementById('search-results');
+
+  if (!q && !fCem && !fCity && !fGen) {
+    grid.innerHTML = ''; hint.classList.remove('hidden'); return;
+  }
+  hint.classList.add('hidden');
+
+  const results = Object.entries(S.graves).filter(([gid, g]) => {
+    if (fCem && g.cemeteryId !== fCem)        return false;
+    if (fGen && g.gender !== fGen)             return false;
+    if (fCity) {
+      const cem = S.cemeteries[g.cemeteryId] || {};
+      if (cem.city !== fCity)                  return false;
+    }
+    if (!q) return true;
+    return (g.name       || '').toLowerCase().includes(q) ||
+           (g.fatherName || '').toLowerCase().includes(q) ||
+           (g.plot       || '').toLowerCase().includes(q) ||
+           (g.section    || '').toLowerCase().includes(q);
+  });
+
+  if (!results.length) { grid.innerHTML = `<p style="color:#9CA3AF;font-size:.85rem">No graves found.</p>`; return; }
+
+  grid.innerHTML = results.map(([gid, g]) => {
+    const cem = S.cemeteries[g.cemeteryId] || {};
+    return `<div class="result-card" data-status="${g.status}" onclick="openGraveDetail('${gid}')">
+      <div class="rc-name">${esc(g.name || 'Empty plot')}</div>
+      ${g.fatherName ? `<div class="rc-father">s/o ${esc(g.fatherName)}</div>` : ''}
+      <div class="rc-meta">
+        <span class="chip">📍 ${esc(cem.name || '–')}</span>
+        ${g.deathDate ? `<span class="chip">✝ ${g.deathDate}</span>` : ''}
+        ${g.section ? `<span class="chip">§${esc(g.section)}</span>` : ''}
+        <span class="status-pill ${g.status}">${g.status}</span>
       </div>
     </div>`;
   }).join('');
 }
 
-function viewCemeteryMap(cid) {
-  document.getElementById('map-cemetery-select').value = cid;
-  navigate('map');
-  setTimeout(() => {
-    updateMapMarkers();
-    renderGrid();
-  }, 200);
-}
-
-document.getElementById('btn-add-cemetery')?.addEventListener('click', () => {
-  openModal('modal-cemetery-form');
+['search-q','sf-cem','sf-city','sf-gender'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', doSearch);
+  document.getElementById(id)?.addEventListener('change', doSearch);
+});
+document.getElementById('search-clear-btn').addEventListener('click', () => {
+  document.getElementById('search-q').value = '';
+  doSearch();
 });
 
-/* Cemetery form submit */
-document.getElementById('cemetery-form').addEventListener('submit', async e => {
-  e.preventDefault();
-  const data = {
-    name:        document.getElementById('cf-name').value.trim(),
-    country:     document.getElementById('cf-country').value.trim(),
-    province:    document.getElementById('cf-province').value.trim(),
-    city:        document.getElementById('cf-city').value.trim(),
-    address:     document.getElementById('cf-address').value.trim(),
-    description: document.getElementById('cf-desc').value.trim(),
-    latitude:    parseFloat(document.getElementById('cf-lat').value) || null,
-    longitude:   parseFloat(document.getElementById('cf-lng').value) || null,
-    createdAt:   Date.now()
-  };
-  try {
-    await dbPush('cemeteries', data);
-    toast('Cemetery added!', 'success');
-    closeModal('modal-cemetery-form');
-    e.target.reset();
-  } catch (err) {
-    toast('Error: ' + err.message, 'error');
-  }
-});
+// ═══════════════════════════
+//  CEMETERIES PANEL
+// ═══════════════════════════
+function renderCemeteriesPanel() {
+  const el   = document.getElementById('cem-cards-list');
+  const cems = Object.entries(S.cemeteries);
+  if (!cems.length) { el.innerHTML = '<p style="color:#9CA3AF;font-size:.85rem">No cemeteries yet.</p>'; return; }
 
-/* ══════════════════════════════════════
-   GRAVES TABLE (admin)
-══════════════════════════════════════ */
-function renderGravesTable() {
-  const tbody = document.getElementById('graves-tbody');
-  if (!tbody) return;
-
-  const filterCem    = document.getElementById('admin-cemetery-filter')?.value || '';
-  const filterStatus = document.getElementById('admin-status-filter')?.value   || '';
-
-  const deceasedByGrave = {};
-  Object.values(STATE.deceased).forEach(d => { deceasedByGrave[d.graveId] = d; });
-
-  const rows = Object.entries(STATE.graves).filter(([gid, g]) => {
-    if (filterCem    && g.cemeteryId !== filterCem)  return false;
-    if (filterStatus && g.status     !== filterStatus) return false;
-    return true;
-  });
-
-  if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:2rem">No graves found.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = rows.map(([gid, g]) => {
-    const cem = STATE.cemeteries[g.cemeteryId] || {};
-    const dec = deceasedByGrave[gid];
-    return `<tr>
-      <td style="font-size:.78rem;color:var(--text-muted);font-family:monospace">${gid.slice(-6)}</td>
-      <td>${esc(cem.name || '–')}</td>
-      <td>${esc(g.section || '–')}</td>
-      <td>${esc(g.row || '–')}</td>
-      <td>${esc(g.plot || '–')}</td>
-      <td><span class="status-badge ${g.status}">${g.status}</span></td>
-      <td>${dec ? esc(dec.fullName) : '<span style="color:var(--text-muted)">—</span>'}</td>
-      <td>
-        <button class="btn-icon edit" onclick="editGrave('${gid}')" title="Edit">✏️</button>
-        <button class="btn-icon del"  onclick="deleteGrave('${gid}')" title="Delete">🗑</button>
-      </td>
-    </tr>`;
+  el.innerHTML = cems.map(([cid, c]) => {
+    const graves    = Object.values(S.graves).filter(g => g.cemeteryId === cid);
+    const total     = graves.length;
+    const occupied  = graves.filter(g => g.status === 'occupied').length;
+    const avail     = graves.filter(g => g.status === 'empty').length;
+    const loc       = [c.city, c.province, c.country].filter(Boolean).map(esc).join(', ');
+    return `<div class="cem-card">
+      <div class="cem-card-name">${esc(c.name)}</div>
+      ${loc ? `<div class="cem-card-loc">📍 ${loc}</div>` : ''}
+      ${c.description ? `<div style="font-size:.8rem;color:#6B7280;margin-bottom:.65rem;line-height:1.5">${esc(c.description)}</div>` : ''}
+      <div class="cem-card-row">
+        <div class="cem-mini-stats">
+          <div class="cms-item"><div class="cms-num">${total}</div><div class="cms-lbl">Total</div></div>
+          <div class="cms-item"><div class="cms-num" style="color:var(--occupied)">${occupied}</div><div class="cms-lbl">Occupied</div></div>
+          <div class="cms-item"><div class="cms-num" style="color:var(--available)">${avail}</div><div class="cms-lbl">Available</div></div>
+        </div>
+        <button class="btn-view" onclick="viewOnMap('${cid}')">View on map</button>
+      </div>
+    </div>`;
   }).join('');
 }
 
-['admin-cemetery-filter', 'admin-status-filter'].forEach(id => {
-  document.getElementById(id)?.addEventListener('change', renderGravesTable);
-});
+window.viewOnMap = function(cemId) {
+  switchView('map');
+  setTimeout(() => flyToCemetery(cemId), 200);
+};
 
-/* ══════════════════════════════════════
-   ADD / EDIT GRAVE
-══════════════════════════════════════ */
-document.getElementById('btn-add-grave').addEventListener('click', () => {
-  STATE.editingGraveId = null;
-  document.getElementById('grave-form-title').textContent = 'Register Grave';
-  document.getElementById('grave-form-submit').textContent = 'Save Grave';
-  document.getElementById('grave-form').reset();
-  toggleDeceasedFields('empty');
-  openModal('modal-grave-form');
-});
+document.getElementById('btn-req-cemetery').addEventListener('click', () => openOverlay('ov-req-cem'));
 
-document.getElementById('gf-status').addEventListener('change', e => {
-  toggleDeceasedFields(e.target.value);
-});
-
-function toggleDeceasedFields(status) {
-  const section = document.getElementById('deceased-section-label');
-  const fields  = document.getElementById('deceased-fields');
-  if (status === 'occupied') {
-    section.classList.remove('hidden');
-    fields.classList.remove('hidden');
-  } else {
-    section.classList.add('hidden');
-    fields.classList.add('hidden');
-  }
-}
-
-window.editGrave = function(graveId) {
-  const g = STATE.graves[graveId];
+// ═══════════════════════════
+//  GRAVE DETAIL
+// ═══════════════════════════
+window.openGraveDetail = function(gid) {
+  const g   = S.graves[gid];
   if (!g) return;
-  closeModal('modal-grave-detail');
+  const cem = S.cemeteries[g.cemeteryId] || {};
+  const isAdmin = !!window.__user;
+  const url = `${location.origin}${location.pathname}?grave=${gid}`;
 
-  STATE.editingGraveId = graveId;
-  document.getElementById('grave-form-title').textContent = 'Edit Grave';
-  document.getElementById('grave-form-submit').textContent = 'Update Grave';
+  document.getElementById('grave-detail-body').innerHTML = `
+    <div class="gd-hero">
+      <div class="gd-avatar ${g.gender||'male'}">${g.gender === 'female' ? '♀' : '♂'}</div>
+      <div>
+        <div class="gd-name">${esc(g.name || 'Empty plot')}</div>
+        ${g.fatherName ? `<div class="gd-father">s/o ${esc(g.fatherName)}</div>` : ''}
+        <span class="status-pill ${g.status}" style="margin-top:.35rem;display:inline-block">${g.status}</span>
+      </div>
+    </div>
 
-  document.getElementById('gf-cemetery').value = g.cemeteryId || '';
-  document.getElementById('gf-section').value  = g.section    || '';
-  document.getElementById('gf-row').value       = g.row        || '';
-  document.getElementById('gf-plot').value      = g.plot       || '';
-  document.getElementById('gf-lat').value       = g.latitude   || '';
-  document.getElementById('gf-lng').value       = g.longitude  || '';
-  document.getElementById('gf-status').value    = g.status     || 'empty';
-  toggleDeceasedFields(g.status);
+    <div class="gd-grid">
+      <div class="gd-item"><label>Cemetery</label><p>${esc(cem.name||'–')}</p></div>
+      <div class="gd-item"><label>Location</label><p>${[cem.city,cem.country].filter(Boolean).map(esc).join(', ')||'–'}</p></div>
+      <div class="gd-item"><label>Date of birth</label><p>${esc(g.dob||'–')}</p></div>
+      <div class="gd-item"><label>Date of death</label><p>${esc(g.deathDate||'–')}</p></div>
+      <div class="gd-item"><label>Burial date</label><p>${esc(g.burialDate||'–')}</p></div>
+      <div class="gd-item"><label>Age</label><p>${g.age ? esc(String(g.age)) : '–'}</p></div>
+      ${g.section ? `<div class="gd-item"><label>Section / Row / Plot</label><p>${esc(g.section)} / ${esc(g.row||'–')} / ${esc(g.plot||'–')}</p></div>` : ''}
+    </div>
 
-  const dec = Object.values(STATE.deceased).find(d => d.graveId === graveId);
-  if (dec) {
-    document.getElementById('gf-name').value   = dec.fullName   || '';
-    document.getElementById('gf-father').value = dec.fatherName || '';
-    document.getElementById('gf-gender').value = dec.gender     || '';
-    document.getElementById('gf-dob').value    = dec.birthDate  || '';
-    document.getElementById('gf-dod').value    = dec.deathDate  || '';
-    document.getElementById('gf-burial').value = dec.burialDate || '';
-    document.getElementById('gf-bio').value    = dec.bio        || '';
-  }
+    ${g.bio ? `<div class="gd-bio">${esc(g.bio)}</div>` : ''}
 
-  openModal('modal-grave-form');
+    <div class="gd-actions">
+      ${g.lat && g.lng ? `<button class="btn-green" onclick="navToGrave(${g.lat},${g.lng})">🧭 Navigate</button>` : ''}
+      <button class="btn-view" onclick="showOnMainMap('${gid}')">📍 Show on map</button>
+      <button class="btn-secondary" style="font-size:.78rem" onclick="openCorrection('${gid}')">Report correction</button>
+      ${isAdmin ? `<button class="btn-red" onclick="deleteGrave('${gid}')">Delete</button>` : ''}
+    </div>
+
+    <div style="margin-top:1rem">
+      <div class="gd-qr-label">QR Code</div>
+      <div id="gd-qr"></div>
+    </div>
+
+    ${isAdmin ? `
+    <div style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border)">
+      <div class="gd-qr-label">Quick status update</div>
+      <div style="display:flex;gap:.4rem;margin-top:.4rem;flex-wrap:wrap">
+        <button class="btn-green" onclick="setGraveStatus('${gid}','empty')">Mark empty</button>
+        <button style="background:var(--reserved);color:#fff;border:none;border-radius:6px;padding:.42rem .85rem;font-family:inherit;font-size:.78rem;font-weight:600;cursor:pointer" onclick="setGraveStatus('${gid}','reserved')">Mark reserved</button>
+        <button class="btn-red" onclick="setGraveStatus('${gid}','occupied')">Mark occupied</button>
+      </div>
+    </div>` : ''}
+  `;
+
+  openOverlay('ov-grave');
+
+  setTimeout(() => {
+    const qrEl = document.getElementById('gd-qr');
+    if (qrEl) new QRCode(qrEl, { text: url, width: 86, height: 86 });
+  }, 100);
 };
 
-document.getElementById('grave-form').addEventListener('submit', async e => {
+window.navToGrave = (lat, lng) =>
+  window.open(`https://www.openstreetmap.org/directions?from=&to=${lat},${lng}`, '_blank');
+
+window.showOnMainMap = function(gid) {
+  closeOverlay('ov-grave');
+  switchView('map');
+  const g = S.graves[gid];
+  if (!g?.lat || !g?.lng) return;
+  setTimeout(() => {
+    S.MAP.flyTo([g.lat, g.lng], 20);
+    S.graveLayers[gid]?.openTooltip();
+  }, 200);
+};
+
+window.setGraveStatus = async (gid, status) => {
+  await dbUpdate(`graves/${gid}`, { status });
+  toast(`Status updated to ${status}`, 'ok');
+  closeOverlay('ov-grave');
+};
+
+window.deleteGrave = async gid => {
+  if (!confirm('Delete this grave record?')) return;
+  await dbRemove(`graves/${gid}`);
+  toast('Grave deleted', 'ok');
+  closeOverlay('ov-grave');
+};
+
+// ═══════════════════════════
+//  CORRECTION REQUEST
+// ═══════════════════════════
+window.openCorrection = function(gid) {
+  document.getElementById('corr-grave-id').value = gid;
+  openOverlay('ov-correction');
+};
+
+document.getElementById('correction-form').addEventListener('submit', async e => {
   e.preventDefault();
-
-  const graveData = {
-    cemeteryId: document.getElementById('gf-cemetery').value,
-    section:    document.getElementById('gf-section').value.trim(),
-    row:        document.getElementById('gf-row').value.trim(),
-    plot:       document.getElementById('gf-plot').value.trim(),
-    latitude:   parseFloat(document.getElementById('gf-lat').value) || null,
-    longitude:  parseFloat(document.getElementById('gf-lng').value) || null,
-    status:     document.getElementById('gf-status').value,
-    updatedAt:  Date.now()
-  };
-
-  const status = graveData.status;
-
-  try {
-    let graveId = STATE.editingGraveId;
-
-    if (graveId) {
-      await dbSet(`graves/${graveId}`, graveData);
-    } else {
-      graveId = await dbPush('graves', graveData);
-    }
-
-    // Handle deceased
-    if (status === 'occupied') {
-      const decData = {
-        graveId,
-        fullName:   document.getElementById('gf-name').value.trim(),
-        fatherName: document.getElementById('gf-father').value.trim(),
-        gender:     document.getElementById('gf-gender').value,
-        birthDate:  document.getElementById('gf-dob').value,
-        deathDate:  document.getElementById('gf-dod').value,
-        burialDate: document.getElementById('gf-burial').value,
-        bio:        document.getElementById('gf-bio').value.trim(),
-        updatedAt:  Date.now()
-      };
-
-      // Find existing deceased record for this grave
-      const existingDec = Object.entries(STATE.deceased).find(([, d]) => d.graveId === graveId);
-      if (existingDec) {
-        await dbSet(`deceased/${existingDec[0]}`, decData);
-      } else {
-        await dbPush('deceased', decData);
-      }
-    }
-
-    toast(STATE.editingGraveId ? 'Grave updated!' : 'Grave registered!', 'success');
-    closeModal('modal-grave-form');
-    e.target.reset();
-    STATE.editingGraveId = null;
-  } catch (err) {
-    toast('Error: ' + err.message, 'error');
-  }
+  const gid = document.getElementById('corr-grave-id').value;
+  const g   = S.graves[gid] || {};
+  await dbPush('requests', {
+    type:       'correction',
+    graveId:    gid,
+    graveName:  g.name || '',
+    cemeteryId: g.cemeteryId || '',
+    issue:      document.getElementById('corr-type').value,
+    message:    document.getElementById('corr-msg').value.trim(),
+    submitter:  document.getElementById('corr-name').value.trim() || 'Anonymous',
+    contact:    document.getElementById('corr-contact').value.trim(),
+    resolved:   false,
+    createdAt:  Date.now()
+  });
+  toast('Report submitted. Thank you!', 'ok');
+  closeOverlay('ov-correction');
+  e.target.reset();
 });
 
-window.deleteGrave = async function(graveId) {
-  if (!confirm('Delete this grave record? This cannot be undone.')) return;
-  try {
-    await dbRemove(`graves/${graveId}`);
-    // Remove deceased record too
-    const dec = Object.entries(STATE.deceased).find(([, d]) => d.graveId === graveId);
-    if (dec) await dbRemove(`deceased/${dec[0]}`);
-    toast('Grave deleted', 'success');
-  } catch (err) {
-    toast('Error: ' + err.message, 'error');
-  }
+// ═══════════════════════════
+//  REQUEST CEMETERY
+// ═══════════════════════════
+document.getElementById('req-cem-form').addEventListener('submit', async e => {
+  e.preventDefault();
+  await dbPush('requests', {
+    type:      'new-cemetery',
+    name:      document.getElementById('rc-name').value.trim(),
+    city:      document.getElementById('rc-city').value.trim(),
+    country:   document.getElementById('rc-country').value.trim(),
+    desc:      document.getElementById('rc-desc').value.trim(),
+    submitter: document.getElementById('rc-submitter').value.trim() || 'Anonymous',
+    contact:   document.getElementById('rc-contact').value.trim(),
+    resolved:  false,
+    createdAt: Date.now()
+  });
+  toast('Request submitted!', 'ok');
+  closeOverlay('ov-req-cem');
+  e.target.reset();
+});
+
+// ═══════════════════════════
+//  ADMIN PANEL
+// ═══════════════════════════
+function renderAdmin() {
+  // Tiles
+  const graves    = Object.values(S.graves);
+  const reqs      = Object.values(S.requests);
+  const total     = graves.length;
+  const occupied  = graves.filter(g => g.status === 'occupied').length;
+  const avail     = graves.filter(g => g.status === 'empty').length;
+  const reserved  = graves.filter(g => g.status === 'reserved').length;
+  const pending   = reqs.filter(r => !r.resolved).length;
+  const cems      = Object.keys(S.cemeteries).length;
+
+  document.getElementById('dash-tiles').innerHTML = `
+    <div class="dash-tile"><div class="dn">${cems}</div><div class="dl">Cemeteries</div></div>
+    <div class="dash-tile"><div class="dn">${total}</div><div class="dl">Total graves</div></div>
+    <div class="dash-tile occ"><div class="dn">${occupied}</div><div class="dl">Occupied</div></div>
+    <div class="dash-tile avl"><div class="dn">${avail}</div><div class="dl">Available</div></div>
+    <div class="dash-tile res"><div class="dn">${reserved}</div><div class="dl">Reserved</div></div>
+    <div class="dash-tile req"><div class="dn">${pending}</div><div class="dl">Pending requests</div></div>
+  `;
+
+  renderAdminTab('graves');
+}
+
+// Admin tabs
+document.querySelectorAll('.atab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.atab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.atab-content').forEach(c => c.classList.add('hidden'));
+    document.getElementById(`atab-${btn.dataset.atab}`).classList.remove('hidden');
+    renderAdminTab(btn.dataset.atab);
+  });
+});
+
+function renderAdminTab(tab) {
+  if (tab === 'graves') renderAdminGraves();
+  if (tab === 'requests') renderAdminRequests();
+  if (tab === 'cemeteries-admin') renderAdminCemeteries();
+}
+
+function renderAdminGraves() {
+  const el = document.getElementById('atab-graves');
+  const graves = Object.entries(S.graves).sort((a,b) => (b[1].createdAt||0)-(a[1].createdAt||0));
+  if (!graves.length) { el.innerHTML = '<p style="color:#9CA3AF;font-size:.83rem;padding:.5rem">No graves yet. Use the map to register graves.</p>'; return; }
+
+  el.innerHTML = `
+    <div style="margin-bottom:.75rem;display:flex;gap:.4rem">
+      <button class="btn-primary" style="font-size:.78rem" onclick="openGraveWizard()">+ Register grave</button>
+    </div>` +
+    graves.map(([gid, g]) => {
+      const cem   = S.cemeteries[g.cemeteryId] || {};
+      const color = STATUS_COLOR[g.status] || '#9CA3AF';
+      return `<div class="ag-row">
+        <div class="ag-status-dot" style="background:${color}"></div>
+        <div class="ag-name">${esc(g.name || 'Empty plot')}</div>
+        <div class="ag-cem">${esc(cem.name || '–')}</div>
+        <div class="ag-actions">
+          <button class="ibt" onclick="openGraveDetail('${gid}')" title="View">👁</button>
+          <button class="ibt" onclick="deleteGrave('${gid}')" title="Delete">🗑</button>
+        </div>
+      </div>`;
+    }).join('');
+}
+
+function renderAdminRequests() {
+  const el   = document.getElementById('atab-requests');
+  const reqs = Object.entries(S.requests).sort((a,b) => b[1].createdAt - a[1].createdAt);
+  if (!reqs.length) { el.innerHTML = '<p style="color:#9CA3AF;font-size:.83rem;padding:.5rem">No requests yet.</p>'; return; }
+
+  el.innerHTML = reqs.map(([rid, r]) => {
+    const date = r.createdAt ? new Date(r.createdAt).toLocaleDateString() : '–';
+    return `<div class="req-card" style="${r.resolved ? 'opacity:.5' : ''}">
+      <div class="req-card-top">
+        <span class="req-card-type">${esc(r.type?.replace('-', ' ')||'–')}</span>
+        <span class="req-card-date">${date}</span>
+      </div>
+      <div class="req-card-msg">${esc(r.message || r.desc || '–')}</div>
+      <div class="req-card-meta">
+        ${r.graveName ? `Grave: ${esc(r.graveName)} · ` : ''}
+        ${r.name ? esc(r.name) : esc(r.submitter||'Anonymous')}
+        ${r.contact ? ` · ${esc(r.contact)}` : ''}
+      </div>
+      <div class="req-card-actions">
+        ${!r.resolved ? `<button class="btn-green" style="font-size:.75rem;padding:.3rem .65rem" onclick="resolveRequest('${rid}')">✓ Resolve</button>` : '<span style="color:var(--available);font-size:.75rem;font-weight:600">✓ Resolved</span>'}
+        <button class="btn-secondary" style="font-size:.75rem;padding:.3rem .65rem" onclick="deleteRequest('${rid}')">Delete</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderAdminCemeteries() {
+  const el = document.getElementById('atab-cemeteries-admin');
+  const cems = Object.entries(S.cemeteries);
+  if (!cems.length) { el.innerHTML = '<p style="color:#9CA3AF;font-size:.83rem;padding:.5rem">No cemeteries yet.</p>'; return; }
+
+  el.innerHTML = `
+    <div style="margin-bottom:.75rem">
+      <button class="btn-primary" style="font-size:.78rem" onclick="openOverlay('ov-add-cem')">+ Add cemetery</button>
+    </div>` +
+    cems.map(([cid, c]) => {
+      const graves = Object.values(S.graves).filter(g => g.cemeteryId === cid).length;
+      return `<div class="ag-row">
+        <div class="ag-status-dot" style="background:var(--available)"></div>
+        <div class="ag-name">${esc(c.name)}</div>
+        <div class="ag-cem">${esc(c.city||'–')} · ${graves} graves</div>
+        <div class="ag-actions">
+          <button class="ibt" onclick="viewOnMap('${cid}')" title="View on map">🗺</button>
+          <button class="ibt" onclick="deleteCemetery('${cid}')" title="Delete">🗑</button>
+        </div>
+      </div>`;
+    }).join('');
+}
+
+window.resolveRequest = async rid => {
+  await dbUpdate(`requests/${rid}`, { resolved: true });
+  toast('Marked resolved', 'ok');
+};
+window.deleteRequest = async rid => {
+  if (!confirm('Delete this request?')) return;
+  await dbRemove(`requests/${rid}`);
+  toast('Deleted', 'ok');
+};
+window.deleteCemetery = async cid => {
+  if (!confirm('Delete this cemetery? All graves inside will remain in the database.')) return;
+  await dbRemove(`cemeteries/${cid}`);
+  toast('Cemetery deleted', 'ok');
 };
 
-/* ══════════════════════════════════════
-   STATISTICS
-══════════════════════════════════════ */
-function renderStats() {
-  const filterCem = document.getElementById('stats-cemetery-select')?.value || '';
-  const graves = Object.values(STATE.graves).filter(g => !filterCem || g.cemeteryId === filterCem);
-  const dec    = Object.values(STATE.deceased).filter(d => {
-    if (!filterCem) return true;
-    const g = STATE.graves[d.graveId];
-    return g && g.cemeteryId === filterCem;
-  });
-
-  const total    = graves.length;
-  const occupied = graves.filter(g => g.status === 'occupied').length;
-  const avail    = graves.filter(g => g.status === 'empty').length;
-  const reserved = graves.filter(g => g.status === 'reserved').length;
-  const male     = dec.filter(d => d.gender === 'male').length;
-  const female   = dec.filter(d => d.gender === 'female').length;
-
-  const thisYear = new Date().getFullYear().toString();
-  const burialThisYear = dec.filter(d => (d.burialDate || '').startsWith(thisYear)).length;
-
-  document.getElementById('stats-grid').innerHTML = `
-    <div class="stat-card total"><div class="num">${total}</div><div class="label">Total Graves</div></div>
-    <div class="stat-card occ"><div class="num">${occupied}</div><div class="label">Occupied</div></div>
-    <div class="stat-card avail"><div class="num">${avail}</div><div class="label">Available</div></div>
-    <div class="stat-card res"><div class="num">${reserved}</div><div class="label">Reserved</div></div>
-    <div class="stat-card male"><div class="num">${male}</div><div class="label">Male</div></div>
-    <div class="stat-card female"><div class="num">${female}</div><div class="label">Female</div></div>
-    <div class="stat-card yr"><div class="num">${burialThisYear}</div><div class="label">Burials ${thisYear}</div></div>
-  `;
-
-  // Simple bar chart
-  const maxVal = Math.max(total, 1);
-  const bars = [
-    { label: 'Total',    val: total,    color: 'var(--slate)' },
-    { label: 'Occupied', val: occupied, color: 'var(--rose)' },
-    { label: 'Available',val: avail,    color: 'var(--sage)' },
-    { label: 'Reserved', val: reserved, color: 'var(--amber)' },
-    { label: 'Male',     val: male,     color: '#5A9BC9' },
-    { label: 'Female',   val: female,   color: '#C97BA0' },
-  ];
-
-  document.getElementById('stats-chart').innerHTML = `
-    <h3>Overview</h3>
-    <div class="bar-chart">
-      ${bars.map(b => `
-        <div class="bar-item">
-          <div class="bar-val">${b.val}</div>
-          <div class="bar" style="height:${Math.round((b.val/maxVal)*100)}px;background:${b.color}"></div>
-          <div class="bar-label">${b.label}</div>
-        </div>`).join('')}
-    </div>
-  `;
-}
-
-document.getElementById('stats-cemetery-select')?.addEventListener('change', renderStats);
-
-/* ══════════════════════════════════════
-   MODAL HELPERS
-══════════════════════════════════════ */
-function openModal(id) {
-  document.getElementById(id).classList.add('open');
-}
-function closeModal(id) {
-  document.getElementById(id).classList.remove('open');
-}
+// ═══════════════════════════
+//  OVERLAY HELPERS
+// ═══════════════════════════
+window.openOverlay  = id => document.getElementById(id).classList.add('open');
+window.closeOverlay = id => document.getElementById(id).classList.remove('open');
 
 document.querySelectorAll('[data-close]').forEach(btn => {
-  btn.addEventListener('click', () => closeModal(btn.dataset.close));
+  btn.addEventListener('click', () => closeOverlay(btn.dataset.close));
+});
+document.querySelectorAll('.overlay').forEach(o => {
+  o.addEventListener('click', e => { if (e.target === o) closeOverlay(o.id); });
 });
 
-document.querySelectorAll('.modal-overlay').forEach(overlay => {
-  overlay.addEventListener('click', e => {
-    if (e.target === overlay) closeModal(overlay.id);
-  });
-});
-
-/* ══════════════════════════════════════
-   TOAST
-══════════════════════════════════════ */
+// ═══════════════════════════
+//  TOAST
+// ═══════════════════════════
 function toast(msg, type = '') {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.className = `toast ${type}`;
   el.classList.add('show');
-  setTimeout(() => el.classList.remove('show'), 3000);
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
-/* ══════════════════════════════════════
-   DEEP LINK: ?grave=ID
-══════════════════════════════════════ */
+// ═══════════════════════════
+//  DEEP LINK  ?grave=ID
+// ═══════════════════════════
 function checkDeepLink() {
-  const params = new URLSearchParams(location.search);
-  const graveId = params.get('grave');
-  if (graveId && STATE.graves[graveId]) {
-    setTimeout(() => openGraveDetail(graveId), 500);
-  }
+  const gid = new URLSearchParams(location.search).get('grave');
+  if (gid) setTimeout(() => { if (S.graves[gid]) openGraveDetail(gid); }, 1000);
 }
 
-/* ══════════════════════════════════════
-   UTILITY
-══════════════════════════════════════ */
-function esc(str) {
-  if (str == null) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+// ═══════════════════════════
+//  UTILS
+// ═══════════════════════════
+function esc(s) {
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-/* ══════════════════════════════════════
-   INIT
-══════════════════════════════════════ */
-waitForFirebase(() => {
+// ═══════════════════════════
+//  INIT
+// ═══════════════════════════
+waitFB(() => {
+  initMainMap();
   loadData();
   checkDeepLink();
-  toggleDeceasedFields('empty');
+  switchView('map');
 });
