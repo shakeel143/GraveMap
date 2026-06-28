@@ -1752,3 +1752,100 @@ html[dir="rtl"] .toast.show {
     right: 0;
   }
 }
+
+/* ═══ FAMILY TREE LINKING ═══ */
+.family-tree {
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+  margin-bottom: .25rem;
+}
+
+.family-card {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  padding: .55rem .75rem;
+  background: var(--stone);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: border-color .18s, background .18s;
+  position: relative;
+}
+
+.family-card:hover {
+  border-color: var(--accent);
+  background: rgba(46, 204, 138, .07);
+}
+
+.family-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: .85rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.family-avatar.male   { background: rgba(56, 139, 253, .2); color: #56a4ff; }
+.family-avatar.female { background: rgba(248, 113, 113, .2); color: #f87171; }
+
+.family-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.family-name {
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.family-rel {
+  font-size: .73rem;
+  color: var(--text-mid);
+  margin-top: .1rem;
+}
+
+.family-unlink {
+  background: transparent;
+  border: none;
+  color: var(--text-mid);
+  cursor: pointer;
+  font-size: .9rem;
+  line-height: 1;
+  padding: .2rem .35rem;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: color .15s, background .15s;
+}
+
+.family-unlink:hover {
+  color: var(--occupied);
+  background: rgba(224, 90, 90, .1);
+}
+
+.family-search-result {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  padding: .45rem .6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background .15s;
+}
+
+.family-search-result:hover {
+  background: rgba(46, 204, 138, .1);
+}
+
+html[dir="rtl"] .family-card    { flex-direction: row-reverse; }
+html[dir="rtl"] .family-unlink  { margin-left: 0; margin-right: auto; }
+html[dir="rtl"] .family-search-result { flex-direction: row-reverse; }

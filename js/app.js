@@ -1057,6 +1057,11 @@ window.openGraveDetail = function (gid) {
 
     ${g.bio ? `<div class="gd-bio">${esc(g.bio)}</div>` : ''}
 
+    <!-- ─── Family Tree Section ─── -->
+    <div id="gd-family-section" style="margin-top:1rem;padding-top:1rem;border-top:1px solid var(--border)">
+      ${renderFamilySection(gid, isAdmin)}
+    </div>
+
     <div class="gd-actions">
       ${g.lat && g.lng ? `<button class="btn-green" onclick="navToGrave(${g.lat},${g.lng})">🧭 Navigate</button>` : ''}
       <button class="btn-view" onclick="showOnMainMap('${gid}')">📍 Show on map</button>
@@ -1959,6 +1964,142 @@ window.applyLanguage = function() {
   renderCemListPanel();
   renderCemeteriesPanel();
   doSearch();
+};
+
+// ═══════════════════════════
+//  FAMILY TREE LINKING
+// ═══════════════════════════
+const RELATIONS = [
+  { value: 'spouse',  label: '💍 Spouse' },
+  { value: 'parent',  label: '👴 Parent' },
+  { value: 'child',   label: '👶 Child' },
+  { value: 'sibling', label: '🤝 Sibling' },
+  { value: 'other',   label: '🔗 Other' },
+];
+
+// Opposite relation for bidirectional linking
+const OPPOSITE = { spouse: 'spouse', parent: 'child', child: 'parent', sibling: 'sibling', other: 'other' };
+
+function renderFamilySection(gid, isAdmin) {
+  const g = S.graves[gid];
+  if (!g) return '';
+  const relatives = Object.entries(g.relatives || {});
+
+  const relCards = relatives.map(([relId, relData]) => {
+    const rel = S.graves[relId];
+    if (!rel) return '';
+    const relation = typeof relData === 'string' ? relData : (relData?.relation || 'other');
+    const relLabel = RELATIONS.find(r => r.value === relation)?.label || '🔗 Related';
+    return `
+      <div class="family-card" onclick="openGraveDetail('${relId}')" title="Open grave detail">
+        <div class="family-avatar ${rel.gender || 'male'}">${rel.gender === 'female' ? '♀' : '♂'}</div>
+        <div class="family-info">
+          <div class="family-name">${esc(rel.name || 'Unknown')}</div>
+          <div class="family-rel">${relLabel}</div>
+        </div>
+        ${isAdmin ? `<button class="family-unlink" onclick="event.stopPropagation();unlinkRelative('${gid}','${relId}')" title="Remove link">✕</button>` : ''}
+      </div>`;
+  }).join('');
+
+  const adminAdd = isAdmin ? `
+    <div id="family-add-section" style="margin-top:.75rem">
+      <button class="btn-secondary" style="font-size:.78rem" onclick="toggleFamilySearch('${gid}')" id="btn-toggle-family-${gid}">+ Link relative</button>
+      <div id="family-search-box-${gid}" style="display:none;margin-top:.6rem">
+        <input id="family-search-input-${gid}" type="text" placeholder="Search name…"
+          style="width:100%;padding:.4rem .6rem;border:1px solid var(--border);border-radius:6px;font-size:.8rem;background:var(--stone);color:var(--text)"
+          oninput="familySearchInput('${gid}', this.value)" />
+        <div style="margin-top:.4rem">
+          <label style="font-size:.75rem;color:var(--text-mid)">Relationship:</label>
+          <select id="family-rel-select-${gid}" style="width:100%;padding:.35rem;border:1px solid var(--border);border-radius:6px;font-size:.78rem;background:var(--stone);color:var(--text);margin-top:.3rem">
+            ${RELATIONS.map(r => `<option value="${r.value}">${r.label}</option>`).join('')}
+          </select>
+        </div>
+        <div id="family-search-results-${gid}" style="margin-top:.5rem;max-height:180px;overflow-y:auto"></div>
+      </div>
+    </div>` : '';
+
+  return `
+    <div class="gd-qr-label" style="margin-bottom:.6rem">👨‍👩‍👧 Family</div>
+    ${relatives.length === 0 ? '<p style="font-size:.8rem;color:var(--text-mid);margin-bottom:.5rem">No family links yet.</p>' : ''}
+    <div class="family-tree" id="family-tree-${gid}">${relCards}</div>
+    ${adminAdd}
+  `;
+}
+
+window.toggleFamilySearch = function(gid) {
+  const box = document.getElementById(`family-search-box-${gid}`);
+  if (!box) return;
+  const isHidden = box.style.display === 'none';
+  box.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) document.getElementById(`family-search-input-${gid}`)?.focus();
+};
+
+window.familySearchInput = function(gid, query) {
+  const results = document.getElementById(`family-search-results-${gid}`);
+  if (!results) return;
+  const q = query.trim().toLowerCase();
+  if (!q) { results.innerHTML = ''; return; }
+
+  const g = S.graves[gid];
+  const existingLinks = new Set(Object.keys(g?.relatives || {}));
+
+  const matches = Object.entries(S.graves)
+    .filter(([id, gr]) => id !== gid && !existingLinks.has(id) && (
+      (gr.name || '').toLowerCase().includes(q) ||
+      (gr.fatherName || '').toLowerCase().includes(q)
+    ))
+    .slice(0, 8);
+
+  if (!matches.length) {
+    results.innerHTML = `<p style="font-size:.78rem;color:var(--text-mid);padding:.3rem 0">No results found.</p>`;
+    return;
+  }
+
+  results.innerHTML = matches.map(([id, gr]) => {
+    const cem = S.cemeteries[gr.cemeteryId] || {};
+    return `
+      <div class="family-search-result" onclick="linkRelative('${gid}','${id}')" title="Link this person">
+        <div class="family-avatar ${gr.gender || 'male'}" style="width:28px;height:28px;font-size:.7rem">${gr.gender === 'female' ? '♀' : '♂'}</div>
+        <div>
+          <div style="font-size:.82rem;font-weight:600">${esc(gr.name || 'Unknown')}</div>
+          <div style="font-size:.72rem;color:var(--text-mid)">${esc(gr.fatherName ? 's/o ' + gr.fatherName : '')} ${esc(cem.name || '')}</div>
+        </div>
+      </div>`;
+  }).join('');
+};
+
+window.linkRelative = async function(gid, relId) {
+  const relSelect = document.getElementById(`family-rel-select-${gid}`);
+  const relation = relSelect ? relSelect.value : 'other';
+  const opposite = OPPOSITE[relation] || 'other';
+
+  try {
+    // Bidirectional: write both sides
+    await dbUpdate(`graves/${gid}/relatives/${relId}`, { relation });
+    await dbUpdate(`graves/${relId}/relatives/${gid}`, { relation: opposite });
+    toast('✓ Family link added', 'ok');
+
+    // Refresh family section in the open detail view
+    const section = document.getElementById('gd-family-section');
+    if (section) section.innerHTML = renderFamilySection(gid, true);
+  } catch(err) {
+    toast('Error: ' + err.message, 'err');
+  }
+};
+
+window.unlinkRelative = async function(gid, relId) {
+  if (!confirm('Remove this family link?')) return;
+  try {
+    // Remove both sides
+    await dbRemove(`graves/${gid}/relatives/${relId}`);
+    await dbRemove(`graves/${relId}/relatives/${gid}`);
+    toast('Family link removed', 'ok');
+
+    const section = document.getElementById('gd-family-section');
+    if (section) section.innerHTML = renderFamilySection(gid, true);
+  } catch(err) {
+    toast('Error: ' + err.message, 'err');
+  }
 };
 
 // ═══════════════════════════
