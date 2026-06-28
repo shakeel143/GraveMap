@@ -1237,6 +1237,7 @@ function renderAdminTab(tab) {
   if (tab === 'requests') renderAdminRequests();
   if (tab === 'cemeteries-admin') renderAdminCemeteries();
   if (tab === 'admins') renderAdminAdmins();
+  if (tab === 'analytics') renderAdminAnalytics();
 }
 
 function renderAdminGraves() {
@@ -2103,6 +2104,123 @@ window.unlinkRelative = async function(gid, relId) {
 };
 
 // ═══════════════════════════
+//  OCCUPANCY ANALYTICS
+// ═══════════════════════════
+function renderAdminAnalytics() {
+  const el = document.getElementById('atab-analytics');
+  if (!el) return;
+
+  const graves = Object.values(S.graves);
+  const occupied = graves.filter(g => g.status === 'occupied').length;
+  const empty    = graves.filter(g => g.status === 'empty').length;
+  const reserved = graves.filter(g => g.status === 'reserved').length;
+  const total    = graves.length || 1;
+
+  // Per-cemetery stats
+  const cemStats = Object.entries(S.cemeteries).map(([cid, c]) => {
+    const cGraves = graves.filter(g => g.cemeteryId === cid);
+    const occ = cGraves.filter(g => g.status === 'occupied').length;
+    const res = cGraves.filter(g => g.status === 'reserved').length;
+    const emp = cGraves.filter(g => g.status === 'empty').length;
+    return { name: c.name || cid, total: cGraves.length, occ, res, emp };
+  }).filter(c => c.total > 0).sort((a, b) => b.total - a.total);
+
+  el.innerHTML = `
+    <div class="analytics-wrap">
+      <div class="analytics-section">
+        <div class="analytics-title">Overall Status Distribution</div>
+        <div class="analytics-donut-wrap">
+          <canvas id="donut-canvas" width="200" height="200"></canvas>
+          <div class="analytics-legend">
+            <div class="al-item"><span class="al-dot" style="background:#E05A5A"></span><span>Occupied</span><b>${occupied}</b></div>
+            <div class="al-item"><span class="al-dot" style="background:#2ECC8A"></span><span>Available</span><b>${empty}</b></div>
+            <div class="al-item"><span class="al-dot" style="background:#F0B429"></span><span>Reserved</span><b>${reserved}</b></div>
+            <div class="al-item" style="border-top:1px solid var(--border);margin-top:.5rem;padding-top:.5rem">
+              <span style="color:var(--text-mid)">Total</span><b>${total}</b>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="analytics-section" style="flex:2;min-width:0">
+        <div class="analytics-title">Occupancy by Cemetery</div>
+        ${cemStats.length === 0
+          ? '<p style="font-size:.83rem;color:var(--text-mid)">No cemetery data yet.</p>'
+          : `<div class="analytics-bars">
+              ${cemStats.map(c => {
+                const occPct  = c.total ? Math.round(c.occ  / c.total * 100) : 0;
+                const resPct  = c.total ? Math.round(c.res  / c.total * 100) : 0;
+                const empPct  = c.total ? Math.round(c.emp  / c.total * 100) : 0;
+                return `
+                  <div class="analytics-bar-row">
+                    <div class="analytics-bar-label" title="${esc(c.name)}">${esc(c.name)}</div>
+                    <div class="analytics-bar-track">
+                      <div class="analytics-bar-seg" style="width:${occPct}%;background:#E05A5A" title="Occupied: ${c.occ}"></div>
+                      <div class="analytics-bar-seg" style="width:${resPct}%;background:#F0B429" title="Reserved: ${c.res}"></div>
+                      <div class="analytics-bar-seg" style="width:${empPct}%;background:#2ECC8A" title="Available: ${c.emp}"></div>
+                    </div>
+                    <div class="analytics-bar-pct">${occPct}%</div>
+                  </div>`;
+              }).join('')}
+            </div>`
+        }
+      </div>
+    </div>
+  `;
+
+  // Draw donut chart on canvas
+  setTimeout(() => {
+    const canvas = document.getElementById('donut-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const cx = 100, cy = 100, r = 80, inner = 50;
+    const slices = [
+      { value: occupied, color: '#E05A5A' },
+      { value: empty,    color: '#2ECC8A' },
+      { value: reserved, color: '#F0B429' },
+    ].filter(s => s.value > 0);
+
+    if (!slices.length) {
+      ctx.fillStyle = '#374151';
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.arc(cx, cy, inner, 0, Math.PI * 2, true);
+      ctx.fill('evenodd');
+      return;
+    }
+
+    const total2 = slices.reduce((s, v) => s + v.value, 0);
+    let startAngle = -Math.PI / 2;
+    slices.forEach(slice => {
+      const angle = (slice.value / total2) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, r, startAngle, startAngle + angle);
+      ctx.closePath();
+      ctx.fillStyle = slice.color;
+      ctx.fill();
+      startAngle += angle;
+    });
+
+    // Inner hole (donut)
+    ctx.beginPath();
+    ctx.arc(cx, cy, inner, 0, Math.PI * 2);
+    ctx.fillStyle = '#161B28';
+    ctx.fill();
+
+    // Center label
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 22px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(total, cx, cy - 8);
+    ctx.font = '11px Outfit, sans-serif';
+    ctx.fillStyle = '#9CA3AF';
+    ctx.fillText('graves', cx, cy + 12);
+  }, 50);
+}
+
+// ═══════════════════════════
 //  INIT
 // ═══════════════════════════
 waitFB(() => {
@@ -2111,4 +2229,4 @@ waitFB(() => {
   applyLanguage();
   checkDeepLink();
   switchView('map');
-});
+});

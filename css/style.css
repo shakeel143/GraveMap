@@ -1848,4 +1848,124 @@ html[dir="rtl"] .toast.show {
 
 html[dir="rtl"] .family-card    { flex-direction: row-reverse; }
 html[dir="rtl"] .family-unlink  { margin-left: 0; margin-right: auto; }
-html[dir="rtl"] .family-search-result { flex-direction: row-reverse; }
+html[dir="rtl"] .family-search-result { flex-direction: row-reverse; }
+
+/* ═══ OCCUPANCY ANALYTICS ═══ */
+.analytics-wrap {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  padding: .25rem 0;
+}
+
+.analytics-section {
+  flex: 1;
+  min-width: 200px;
+}
+
+.analytics-title {
+  font-size: .8rem;
+  font-weight: 700;
+  color: var(--text-mid);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: .85rem;
+}
+
+.analytics-donut-wrap {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+  flex-wrap: wrap;
+}
+
+.analytics-donut-wrap canvas {
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.analytics-legend {
+  display: flex;
+  flex-direction: column;
+  gap: .45rem;
+  font-size: .82rem;
+}
+
+.al-item {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+}
+
+.al-item span:last-of-type {
+  flex: 1;
+  color: var(--text-mid);
+}
+
+.al-item b {
+  font-weight: 700;
+  color: var(--text);
+  min-width: 28px;
+  text-align: right;
+}
+
+.al-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block !important;
+}
+
+.analytics-bars {
+  display: flex;
+  flex-direction: column;
+  gap: .65rem;
+}
+
+.analytics-bar-row {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+}
+
+.analytics-bar-label {
+  font-size: .78rem;
+  color: var(--text);
+  width: 130px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.analytics-bar-track {
+  flex: 1;
+  height: 14px;
+  background: var(--stone);
+  border-radius: 7px;
+  overflow: hidden;
+  display: flex;
+  border: 1px solid var(--border);
+}
+
+.analytics-bar-seg {
+  height: 100%;
+  transition: width .4s ease;
+  min-width: 0;
+}
+
+.analytics-bar-pct {
+  font-size: .73rem;
+  font-weight: 700;
+  color: var(--text-mid);
+  width: 34px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+html[dir="rtl"] .analytics-donut-wrap { flex-direction: row-reverse; }
+html[dir="rtl"] .analytics-bar-label  { text-align: right; }
+html[dir="rtl"] .analytics-bar-row    { flex-direction: row-reverse; }
+html[dir="rtl"] .analytics-bar-pct    { text-align: left; }
+
