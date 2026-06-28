@@ -18,6 +18,8 @@ const S = {
   cemeteries: {},
   graves: {},
   requests: {},
+  admins: {},
+  lang: localStorage.getItem('gravemap_lang') || 'en',
   currentView: 'map',
   selectedCemId: null,
   // Map objects
@@ -27,6 +29,10 @@ const S = {
   // Wizard state
   cemWizardData: {},
   graveWizardData: {},
+  isEditingGrave: false,
+  editingGraveId: null,
+  isEditingCem: false,
+  editingCemId: null,
   // Mini-maps (in modals)
   locateMap: null,
   locateMarker: null,
@@ -222,6 +228,10 @@ function loadData() {
     const badge = document.getElementById('req-badge');
     badge.textContent = pending;
     badge.style.display = pending ? 'inline' : 'none';
+    if (S.currentView === 'admin') renderAdmin();
+  });
+  dbListen('admins', data => {
+    S.admins = data || {};
     if (S.currentView === 'admin') renderAdmin();
   });
 }
@@ -436,6 +446,9 @@ let cemWizardStep = 1;
 
 document.getElementById('btn-add-cemetery')?.addEventListener('click', () => {
   S.cemWizardData = {};
+  S.isEditingCem = false;
+  S.editingCemId = null;
+  clearCemWizardFields();
   cemWizardStep = 1;
   showCemWizardStep(1);
   openOverlay('ov-add-cem');
@@ -482,14 +495,28 @@ window.cemWizardBack = function (step) {
 };
 
 function initLocateMap() {
-  if (S.locateMap) { S.locateMap.invalidateSize(); return; }
-  S.locateMap = L.map('cem-locate-map').setView([30.3753, 69.3451], 5);
+  const lat = S.cemWizardData.centerLat || S.cemWizardData.latitude;
+  const lng = S.cemWizardData.centerLng || S.cemWizardData.longitude;
+  const center = lat && lng ? [lat, lng] : [30.3753, 69.3451];
+  const zoom = lat && lng ? 16 : 5;
+
+  if (S.locateMap) {
+    S.locateMap.setView(center, zoom);
+    S.locateMap.invalidateSize();
+    if (S.locateMarker) S.locateMap.removeLayer(S.locateMarker);
+    if (lat && lng) S.locateMarker = L.marker([lat, lng]).addTo(S.locateMap);
+    return;
+  }
+
+  S.locateMap = L.map('cem-locate-map').setView(center, zoom);
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
     attribution: '© Esri World Imagery', maxZoom: 21
   }).addTo(S.locateMap);
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 21
   }).addTo(S.locateMap);
+
+  if (lat && lng) S.locateMarker = L.marker([lat, lng]).addTo(S.locateMap);
 
   S.locateMap.on('click', e => {
     if (S.locateMarker) S.locateMap.removeLayer(S.locateMarker);
@@ -522,6 +549,16 @@ function initBoundaryMap() {
   if (S.boundaryMap) {
     S.boundaryMap.setView(center, 17);
     S.boundaryMap.invalidateSize();
+    if (S.boundaryDrawn) S.boundaryMap.removeLayer(S.boundaryDrawn);
+    if (S.cemWizardData.boundary) {
+      try {
+        const coords = JSON.parse(S.cemWizardData.boundary);
+        S.boundaryDrawn = L.polygon(coords, { color: '#0F1923', weight: 2, fillOpacity: .06 }).addTo(S.boundaryMap);
+        S.boundaryMap.fitBounds(S.boundaryDrawn.getBounds(), { padding: [20, 20] });
+        document.getElementById('boundary-status').textContent = `✓ Boundary loaded with ${coords.length} points.`;
+        document.getElementById('boundary-status').className = 'boundary-status ok';
+      } catch (e) {}
+    }
     return;
   }
 
@@ -532,6 +569,17 @@ function initBoundaryMap() {
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 21
   }).addTo(S.boundaryMap);
+
+  if (S.cemWizardData.boundary) {
+    try {
+      const coords = JSON.parse(S.cemWizardData.boundary);
+      S.boundaryDrawn = L.polygon(coords, { color: '#0F1923', weight: 2, fillOpacity: .06 }).addTo(S.boundaryMap);
+      S.boundaryMap.fitBounds(S.boundaryDrawn.getBounds(), { padding: [20, 20] });
+      const status = document.getElementById('boundary-status');
+      status.textContent = `✓ Boundary loaded with ${coords.length} points.`;
+      status.className = 'boundary-status ok';
+    } catch (e) {}
+  }
 
   S.boundaryMap.pm.addControls({
     position: 'topleft',
@@ -563,8 +611,13 @@ document.getElementById('btn-save-cemetery').addEventListener('click', async () 
   const d = S.cemWizardData;
   if (!d.name) { toast('Go back and fill cemetery name', 'err'); return; }
   try {
-    await dbPush('cemeteries', { ...d, createdAt: Date.now() });
-    toast('Cemetery saved!', 'ok');
+    if (S.isEditingCem) {
+      await dbUpdate(`cemeteries/${S.editingCemId}`, { ...d, updatedAt: Date.now() });
+      toast('Cemetery updated!', 'ok');
+    } else {
+      await dbPush('cemeteries', { ...d, createdAt: Date.now() });
+      toast('Cemetery saved!', 'ok');
+    }
     closeOverlay('ov-add-cem');
     // Reset wizard
     S.cemWizardData = {};
@@ -578,7 +631,12 @@ document.getElementById('btn-save-cemetery').addEventListener('click', async () 
 //  GRAVE WIZARD
 // ═══════════════════════════
 function openGraveWizard(skipToStep3 = false) {
-  if (!skipToStep3) S.graveWizardData = {};
+  if (!skipToStep3) {
+    S.graveWizardData = {};
+    S.isEditingGrave = false;
+    S.editingGraveId = null;
+    clearGraveWizardFields();
+  }
   showGraveWizardStep(skipToStep3 ? 3 : 1);
   openOverlay('ov-add-grave');
 }
@@ -757,8 +815,13 @@ document.getElementById('btn-save-grave').addEventListener('click', async () => 
   };
 
   try {
-    await dbPush('graves', graveData);
-    toast('Grave registered!', 'ok');
+    if (S.isEditingGrave) {
+      await dbUpdate(`graves/${S.editingGraveId}`, graveData);
+      toast('Grave updated!', 'ok');
+    } else {
+      await dbPush('graves', graveData);
+      toast('Grave registered!', 'ok');
+    }
     closeOverlay('ov-add-grave');
     S.graveWizardData = {};
     S.graveDrawn = null;
@@ -1000,7 +1063,10 @@ window.openGraveDetail = function (gid) {
       <button class="btn-copy-link" id="btn-copy-link" onclick="copyGraveLink('${gid}')">🔗 Copy link</button>
       <button class="btn-secondary" style="font-size:.78rem" onclick="printGraveCard('${gid}')">🖨️ Print card</button>
       <button class="btn-secondary" style="font-size:.78rem" onclick="openCorrection('${gid}')">Report correction</button>
-      ${isAdmin ? `<button class="btn-red" onclick="deleteGrave('${gid}')">Delete</button>` : ''}
+      ${isAdmin ? `
+        <button class="btn-green" onclick="editGrave('${gid}')">✏️ Edit</button>
+        <button class="btn-red" onclick="deleteGrave('${gid}')">Delete</button>
+      ` : ''}
     </div>
 
     <div style="margin-top:1rem">
@@ -1165,6 +1231,7 @@ function renderAdminTab(tab) {
   if (tab === 'graves') renderAdminGraves();
   if (tab === 'requests') renderAdminRequests();
   if (tab === 'cemeteries-admin') renderAdminCemeteries();
+  if (tab === 'admins') renderAdminAdmins();
 }
 
 function renderAdminGraves() {
@@ -1242,6 +1309,7 @@ function renderAdminCemeteries() {
         <div class="ag-cem">${esc(c.city || '–')} · ${graves} graves</div>
         <div class="ag-actions">
           <button class="ibt" onclick="viewOnMap('${cid}')" title="View on map">🗺</button>
+          <button class="ibt" onclick="editCemetery('${cid}')" title="Edit">✏️</button>
           <button class="ibt" onclick="deleteCemetery('${cid}')" title="Delete">🗑</button>
         </div>
       </div>`;
@@ -1298,6 +1366,71 @@ function toast(msg, type = '') {
   clearTimeout(el._t);
   el._t = setTimeout(() => el.classList.remove('show'), 3000);
 }
+
+// ═══════════════════════════
+//  WIZARD INPUT UTILITIES
+// ═══════════════════════════
+window.fillGraveWizardFields = function(d) {
+  document.getElementById('gw-name').value = d.name || '';
+  document.getElementById('gw-father').value = d.fatherName || '';
+  document.getElementById('gw-gender').value = d.gender || '';
+  document.getElementById('gw-dob').value = d.dob || '';
+  document.getElementById('gw-dod').value = d.deathDate || d.dod || '';
+  document.getElementById('gw-burial').value = d.burialDate || '';
+  document.getElementById('gw-age').value = d.age || '';
+  document.getElementById('gw-status').value = d.status || 'occupied';
+  document.getElementById('gw-section').value = d.section || '';
+  document.getElementById('gw-row').value = d.row || '';
+  document.getElementById('gw-plot').value = d.plot || '';
+  document.getElementById('gw-bio').value = d.bio || '';
+  document.getElementById('gw-photo').value = d.photoUrl || '';
+};
+
+window.clearGraveWizardFields = function() {
+  fillGraveWizardFields({});
+};
+
+window.fillCemWizardFields = function(d) {
+  document.getElementById('cw-name').value = d.name || '';
+  document.getElementById('cw-country').value = d.country || '';
+  document.getElementById('cw-province').value = d.province || '';
+  document.getElementById('cw-district').value = d.district || '';
+  document.getElementById('cw-city').value = d.city || '';
+  document.getElementById('cw-address').value = d.address || '';
+  document.getElementById('cw-desc').value = d.description || d.desc || '';
+  document.getElementById('cw-lat').value = d.centerLat || d.latitude || '';
+  document.getElementById('cw-lng').value = d.centerLng || d.longitude || '';
+};
+
+window.clearCemWizardFields = function() {
+  fillCemWizardFields({});
+  if (S.locateMarker && S.locateMap) { S.locateMap.removeLayer(S.locateMarker); S.locateMarker = null; }
+  if (S.boundaryDrawn && S.boundaryMap) { S.boundaryMap.removeLayer(S.boundaryDrawn); S.boundaryDrawn = null; }
+};
+
+window.editGrave = function (gid) {
+  closeOverlay('ov-grave');
+  const g = S.graves[gid];
+  if (!g) return;
+  S.graveWizardData = { ...g, dod: g.deathDate };
+  S.isEditingGrave = true;
+  S.editingGraveId = gid;
+  fillGraveWizardFields(S.graveWizardData);
+  showGraveWizardStep(1);
+  openOverlay('ov-add-grave');
+};
+
+window.editCemetery = function (cid) {
+  const c = S.cemeteries[cid];
+  if (!c) return;
+  S.cemWizardData = { ...c };
+  S.isEditingCem = true;
+  S.editingCemId = cid;
+  fillCemWizardFields(c);
+  cemWizardStep = 1;
+  showCemWizardStep(1);
+  openOverlay('ov-add-cem');
+};
 
 // ═══════════════════════════
 //  DEEP LINK  #grave-ID  or  ?grave=ID (legacy)
@@ -1526,11 +1659,315 @@ document.getElementById('btn-do-csv-import').addEventListener('click', async () 
 });
 
 // ═══════════════════════════
+//  ADMINS MANAGEMENT
+// ═══════════════════════════
+function renderAdminAdmins() {
+  const el = document.getElementById('atab-admins');
+  const admins = Object.entries(S.admins || {});
+
+  const formHtml = `
+    <form id="add-admin-form" style="margin-bottom:1.25rem;background:var(--stone);padding:1rem;border:1px solid var(--border);border-radius:var(--r);max-width:480px">
+      <h4 style="margin-bottom:.75rem;font-size:.85rem;color:var(--text-mid)">Add New Administrator</h4>
+      <div class="field">
+        <label>Google User ID (UID) *</label>
+        <input id="adm-uid" type="text" placeholder="Paste user's Google UID here" required style="width:100%;padding:.45rem;border:1px solid var(--border);border-radius:6px;font-size:.8rem" />
+      </div>
+      <div class="field-row" style="margin-top:.5rem">
+        <div class="field">
+          <label>Display Name (optional)</label>
+          <input id="adm-name" type="text" placeholder="e.g. John Doe" style="width:100%;padding:.45rem;border:1px solid var(--border);border-radius:6px;font-size:.8rem" />
+        </div>
+        <div class="field">
+          <label>Email (optional)</label>
+          <input id="adm-email" type="email" placeholder="e.g. john@example.com" style="width:100%;padding:.45rem;border:1px solid var(--border);border-radius:6px;font-size:.8rem" />
+        </div>
+      </div>
+      <button type="submit" class="btn-primary" style="margin-top:.75rem;font-size:.78rem">Add Administrator</button>
+    </form>
+  `;
+
+  if (!admins.length) {
+    el.innerHTML = formHtml + '<p style="color:#9CA3AF;font-size:.83rem;padding:.5rem 0">No other administrators registered.</p>';
+    attachAddAdminSubmit();
+    return;
+  }
+
+  el.innerHTML = formHtml + `
+    <div style="font-size:.85rem;font-weight:700;margin-bottom:.5rem;color:var(--text-mid)">Active Administrators</div>
+    <div style="overflow-x:auto">
+      <table class="csv-tbl" style="font-size:.8rem">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Google UID</th>
+            <th>Added Date</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${admins.map(([uid, a]) => {
+            const date = a.addedAt ? new Date(a.addedAt).toLocaleDateString() : '–';
+            const isSelf = window.__user && window.__user.uid === uid;
+            return `<tr>
+              <td><b>${esc(a.name || 'Admin')}</b> ${isSelf ? ' <span style="font-size:.7rem;color:var(--accent)">(You)</span>' : ''}</td>
+              <td>${esc(a.email || '–')}</td>
+              <td style="font-family:monospace;font-size:.72rem">${esc(uid)}</td>
+              <td>${date}</td>
+              <td>
+                <button class="ibt" onclick="deleteAdmin('${uid}')" title="Remove Admin" style="color:var(--occupied)">🗑</button>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  attachAddAdminSubmit();
+}
+
+function attachAddAdminSubmit() {
+  const form = document.getElementById('add-admin-form');
+  if (!form) return;
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const uid = document.getElementById('adm-uid').value.trim();
+    const name = document.getElementById('adm-name').value.trim();
+    const email = document.getElementById('adm-email').value.trim();
+    if (!uid) return;
+
+    try {
+      await dbUpdate(`admins/${uid}`, {
+        name: name || 'Admin',
+        email: email || null,
+        addedAt: Date.now()
+      });
+      toast('Administrator added successfully!', 'ok');
+      form.reset();
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  });
+}
+
+window.deleteAdmin = async uid => {
+  if (window.__user && window.__user.uid === uid) {
+    if (!confirm('Warning: You are about to remove yourself as administrator! If you proceed, you will lose access. Continue?')) return;
+  } else {
+    if (!confirm('Remove this user from administrators?')) return;
+  }
+  try {
+    await dbRemove(`admins/${uid}`);
+    toast('Administrator removed', 'ok');
+    if (window.__user && window.__user.uid === uid) {
+      location.reload();
+    }
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+};
+
+// Handle unauthorized login access
+document.addEventListener('authUnauthorized', e => {
+  const uid = e.detail;
+  const modalHtml = `
+    <div style="text-align:center;padding:1.5rem">
+      <div style="font-size:2.5rem;margin-bottom:1rem">🚫</div>
+      <h3 style="margin-bottom:.5rem;color:var(--occupied)">Access Denied</h3>
+      <p style="font-size:.85rem;color:var(--text-mid);line-height:1.5;margin-bottom:1.2rem">
+        You are not registered as an administrator. Please copy your Google User ID (UID) below and send it to an existing administrator to request access.
+      </p>
+      <div style="background:var(--stone);padding:.6rem;border:1px solid var(--border);border-radius:6px;font-family:monospace;font-size:.8rem;word-break:break-all;user-select:all;margin-bottom:1.2rem">
+        ${uid}
+      </div>
+      <button class="btn-primary" onclick="closeOverlay('ov-grave')">Dismiss</button>
+    </div>
+  `;
+  document.getElementById('grave-detail-body').innerHTML = modalHtml;
+  openOverlay('ov-grave');
+});
+
+// ═══════════════════════════
+//  URDU / ENGLISH TRANSLATIONS & RTL
+// ═══════════════════════════
+const TR = {
+  en: {
+    brand_tag: "Digitally preserving cemeteries",
+    nav_map: "🗺 Map",
+    nav_search: "🔍 Search",
+    nav_cemeteries: "🏛 Cemeteries",
+    nav_admin: "⚙ Admin",
+    btn_login: "Sign in as Admin",
+    cems_title: "Cemeteries",
+    filter_placeholder: "Filter cemeteries…",
+    legend_avail: "Available",
+    legend_occupied: "Occupied",
+    legend_reserved: "Reserved",
+    search_title: "Search graves",
+    search_sub: "Find anyone across all registered cemeteries",
+    search_placeholder: "Name, father's name, cemetery…",
+    all_cems: "All cemeteries",
+    all_cities: "All cities",
+    any_gender: "Any gender",
+    male: "Male",
+    female: "Female",
+    search_empty: "Enter a name to search across all cemeteries.",
+    cems_panel_title: "All cemeteries",
+    cems_panel_sub: "Registered cemeteries on GraveMap",
+    no_cems: "No cemeteries yet.",
+    req_title: "Don't see your cemetery?",
+    req_btn: "+ Request to add a cemetery",
+    manage_cems: "Manage cemeteries",
+    add_cem: "+ Add cemetery",
+    admin_dash: "Admin dashboard",
+    admin_graves: "Graves",
+    admin_requests: "Requests",
+    admin_cemeteries: "Cemeteries",
+    admin_admins: "Admins",
+    register_grave: "+ Register grave",
+    import_csv: "📥 Import CSV",
+    no_graves_yet: "No graves yet. Register one above or import from CSV.",
+    gender_male: "Male",
+    gender_female: "Female",
+    empty_plot: "Empty plot",
+    occupied: "occupied",
+    reserved: "reserved",
+    empty: "empty",
+    navigate: "🧭 Navigate",
+    show_on_map: "📍 Show on map",
+    copy_link: "🔗 Copy link",
+    print_card: "🖨️ Print card",
+    report_correction: "Report correction"
+  },
+  ur: {
+    brand_tag: "قبرستانوں کا ڈیجیٹل تحفظ",
+    nav_map: "🗺 نقشہ",
+    nav_search: "🔍 تلاش",
+    nav_cemeteries: "🏛 قبرستان",
+    nav_admin: "⚙ ایڈمن",
+    btn_login: "ایڈمن لاگ ان",
+    cems_title: "قبرستان",
+    filter_placeholder: "قبرستان تلاش کریں…",
+    legend_avail: "خالی جگہ",
+    legend_occupied: "بھرا ہوا",
+    legend_reserved: "محفوظ",
+    search_title: "قبر تلاش کریں",
+    search_sub: "تمام رجسٹرڈ قبرستانوں میں کسی کو بھی تلاش کریں",
+    search_placeholder: "نام، والد کا نام، قبرستان…",
+    all_cems: "تمام قبرستان",
+    all_cities: "تمام شہر",
+    any_gender: "کوئی بھی جنس",
+    male: "مرد",
+    female: "عورت",
+    search_empty: "تمام قبرستانوں میں تلاش کرنے کے لیے نام درج کریں۔",
+    cems_panel_title: "تمام قبرستان",
+    cems_panel_sub: "GraveMap پر رجسٹرڈ قبرستان",
+    no_cems: "ابھی تک کوئی قبرستان نہیں ہے۔",
+    req_title: "آپ کا قبرستان نظر نہیں آ رہا؟",
+    req_btn: "+ قبرستان شامل کرنے کی درخواست کریں",
+    manage_cems: "قبرستانوں کا انتظام",
+    add_cem: "+ قبرستان شامل کریں",
+    admin_dash: "ایڈمن ڈیش بورڈ",
+    admin_graves: "قبریں",
+    admin_requests: "درخواستیں",
+    admin_cemeteries: "قبرستان",
+    admin_admins: "ایڈمنز",
+    register_grave: "+ قبر رجسٹر کریں",
+    import_csv: "📥 فائل امپورٹ کریں",
+    no_graves_yet: "ابھی تک کوئی قبر نہیں ہے۔ اوپر سے رجسٹر کریں یا فائل امپورٹ کریں۔",
+    gender_male: "مرد",
+    gender_female: "عورت",
+    empty_plot: "خالی پلاٹ",
+    occupied: "بھرا ہوا",
+    reserved: "محفوظ",
+    empty: "خالی",
+    navigate: "🧭 راستہ دکھائیں",
+    show_on_map: "📍 نقشے پر دیکھیں",
+    copy_link: "🔗 لنک کاپی کریں",
+    print_card: "🖨️ پرنٹ کریں",
+    report_correction: "درستی کی درخوست کریں"
+  }
+};
+
+window.toggleLanguage = function() {
+  S.lang = S.lang === 'en' ? 'ur' : 'en';
+  localStorage.setItem('gravemap_lang', S.lang);
+  applyLanguage();
+};
+
+window.applyLanguage = function() {
+  const lang = S.lang;
+  const t = TR[lang];
+  document.documentElement.dir = lang === 'ur' ? 'rtl' : 'ltr';
+  document.documentElement.lang = lang;
+  
+  const btn = document.getElementById('btn-lang');
+  if (btn) btn.innerHTML = lang === 'en' ? '🌐 اردو' : '🌐 English';
+
+  const mappings = {
+    'brand-tag-el': t.brand_tag,
+    'btn-login': t.btn_login,
+    'legend-avail-el': t.legend_avail,
+    'legend-occupied-el': t.legend_occupied,
+    'legend-reserved-el': t.legend_reserved,
+    'search-title-el': t.search_title,
+    'search-sub-el': t.search_sub,
+    'search-empty-p': t.search_empty,
+    'cems-title-el': t.cems_panel_title,
+    'cems-sub-el': t.cems_panel_sub,
+    'req-title-el': t.req_title,
+    'btn-req-cemetery': t.req_btn,
+    'req-title-admin-el': t.manage_cems,
+    'cems-sidebar-title-el': t.cems_title
+  };
+
+  for (const [id, text] of Object.entries(mappings)) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  }
+
+  const placeholders = {
+    'map-cem-search': t.filter_placeholder,
+    'search-q': t.search_placeholder
+  };
+  for (const [id, text] of Object.entries(placeholders)) {
+    const el = document.getElementById(id);
+    if (el) el.placeholder = text;
+  }
+
+  const sfCem = document.getElementById('sf-cem');
+  if (sfCem && sfCem.options[0]) sfCem.options[0].textContent = t.all_cems;
+  const sfCity = document.getElementById('sf-city');
+  if (sfCity && sfCity.options[0]) sfCity.options[0].textContent = t.all_cities;
+  const sfGender = document.getElementById('sf-gender');
+  if (sfGender) {
+    if (sfGender.options[0]) sfGender.options[0].textContent = t.any_gender;
+    if (sfGender.options[1]) sfGender.options[1].textContent = t.male;
+    if (sfGender.options[2]) sfGender.options[2].textContent = t.female;
+  }
+
+  const navs = document.querySelectorAll('.tnav');
+  navs.forEach(nav => {
+    const view = nav.dataset.view;
+    if (view === 'map') nav.textContent = t.nav_map;
+    if (view === 'search') nav.textContent = t.nav_search;
+    if (view === 'cemeteries') nav.textContent = t.nav_cemeteries;
+    if (view === 'admin') nav.textContent = t.nav_admin;
+  });
+
+  renderCemListPanel();
+  renderCemeteriesPanel();
+  doSearch();
+};
+
+// ═══════════════════════════
 //  INIT
 // ═══════════════════════════
 waitFB(() => {
   initMainMap();
   loadData();
+  applyLanguage();
   checkDeepLink();
   switchView('map');
 });

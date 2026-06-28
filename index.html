@@ -5,6 +5,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>GraveMap — Digitally preserving cemeteries for future generations</title>
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#2ECC8A" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="GraveMap" />
+  <link rel="apple-touch-icon" href="favicon.png" />
 
   <!-- SEO -->
   <meta name="description"
@@ -69,10 +76,93 @@
       signInWithPopup, signOut, onAuthStateChanged, prov
     };
 
-    onAuthStateChanged(auth, user => {
-      window.__user = user || null;
-      document.dispatchEvent(new CustomEvent('authChanged', { detail: user }));
+    onAuthStateChanged(auth, async user => {
+      if (user) {
+        try {
+          const adminSnap = await get(ref(db, `admins/${user.uid}`));
+          if (adminSnap.exists()) {
+            window.__user = user || null;
+            document.dispatchEvent(new CustomEvent('authChanged', { detail: user }));
+          } else {
+            // Self-bootstrapping: if database has zero admins, make first user admin automatically
+            const allAdminsSnap = await get(ref(db, 'admins'));
+            if (!allAdminsSnap.exists() || Object.keys(allAdminsSnap.val() || {}).length === 0) {
+              await set(ref(db, `admins/${user.uid}`), {
+                email: user.email,
+                name: user.displayName || 'Primary Admin',
+                addedAt: Date.now()
+              });
+              window.__user = user || null;
+              document.dispatchEvent(new CustomEvent('authChanged', { detail: user }));
+            } else {
+              // Unauthorized user
+              await signOut(auth);
+              window.__user = null;
+              document.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
+              document.dispatchEvent(new CustomEvent('authUnauthorized', { detail: user.uid }));
+            }
+          }
+        } catch (e) {
+          console.error("Auth check failed:", e);
+          window.__user = null;
+          document.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
+        }
+      } else {
+        window.__user = null;
+        document.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
+      }
     });
+  </script>
+
+  <!-- PWA Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').then(reg => {
+          console.log('[PWA] Service worker registered:', reg.scope);
+
+          // Detect new SW waiting — show update toast
+          reg.addEventListener('updatefound', () => {
+            const newWorker = reg.installing;
+            newWorker.addEventListener('statechange', () => {
+              if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                // New content is available — show banner
+                showUpdateBanner(reg);
+              }
+            });
+          });
+        }).catch(err => console.warn('[PWA] SW registration failed:', err));
+      });
+    }
+
+    function showUpdateBanner(reg) {
+      const banner = document.createElement('div');
+      banner.id = 'pwa-update-banner';
+      banner.innerHTML = `
+        <span>🔄 A new version of GraveMap is available.</span>
+        <button onclick="applyUpdate()" style="margin-left:.75rem;background:#2ECC8A;color:#0F1117;border:none;padding:.3rem .75rem;border-radius:6px;font-weight:700;cursor:pointer;font-family:inherit">Update</button>
+        <button onclick="document.getElementById('pwa-update-banner').remove()" style="margin-left:.4rem;background:transparent;color:rgba(255,255,255,.5);border:none;cursor:pointer;font-size:1.1rem;line-height:1">✕</button>
+      `;
+      Object.assign(banner.style, {
+        position: 'fixed', bottom: '1rem', left: '50%', transform: 'translateX(-50%)',
+        background: '#1C2333', color: '#fff', padding: '.7rem 1.25rem',
+        borderRadius: '10px', boxShadow: '0 4px 24px rgba(0,0,0,.5)',
+        zIndex: '99999', display: 'flex', alignItems: 'center',
+        fontSize: '.85rem', fontFamily: 'Outfit,sans-serif',
+        border: '1px solid rgba(46,204,138,.3)', maxWidth: '90vw'
+      });
+      document.body.appendChild(banner);
+      window.__pendingSWReg = reg;
+    }
+
+    window.applyUpdate = function() {
+      const reg = window.__pendingSWReg;
+      if (reg && reg.waiting) {
+        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+      navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
+      document.getElementById('pwa-update-banner')?.remove();
+    };
   </script>
 </head>
 
@@ -86,7 +176,7 @@
       <div class="brand-icon">G</div>
       <div class="brand-text">
         <span class="brand-name">GraveMap</span>
-        <span class="brand-tag">Digitally preserving cemeteries</span>
+        <span class="brand-tag" id="brand-tag-el">Digitally preserving cemeteries</span>
       </div>
     </div>
 
@@ -97,7 +187,8 @@
       <button class="tnav admin-only hidden" data-view="admin">⚙ Admin</button>
     </div>
 
-    <div class="topbar-auth">
+    <div class="topbar-auth" style="display:flex;align-items:center;gap:.6rem">
+      <button class="btn-lang" id="btn-lang" onclick="toggleLanguage()" style="background:transparent;border:1px solid rgba(255,255,255,.2);color:#fff;border-radius:6px;padding:.38rem .7rem;font-size:.78rem;font-weight:600;cursor:pointer;font-family:inherit">🌐 اردو</button>
       <button class="btn-login" id="btn-login">Sign in as Admin</button>
       <div class="user-chip hidden" id="user-chip">
         <img id="u-avatar" src="" alt="" />
@@ -118,15 +209,15 @@
 
   <!-- MAP PANEL: cemetery selector + map tools -->
   <div class="float-panel panel-left" id="panel-map">
-    <div class="fp-title">Cemeteries</div>
+    <div class="fp-title" id="cems-sidebar-title-el">Cemeteries</div>
     <div class="fp-search">
       <input id="map-cem-search" type="text" placeholder="Filter cemeteries…" />
     </div>
     <div id="map-cem-list" class="cem-list-scroll"></div>
     <div class="fp-legend">
-      <span class="leg available"></span>Available
-      <span class="leg occupied"></span>Occupied
-      <span class="leg reserved"></span>Reserved
+      <span class="leg available"></span><span id="legend-avail-el">Available</span>
+      <span class="leg occupied"></span><span id="legend-occupied-el">Occupied</span>
+      <span class="leg reserved"></span><span id="legend-reserved-el">Reserved</span>
     </div>
   </div>
 
@@ -152,8 +243,8 @@
   <!-- SEARCH PANEL -->
   <div class="view-panel hidden" id="panel-search">
     <div class="vp-header">
-      <h2>Search graves</h2>
-      <p>Find anyone across all registered cemeteries</p>
+      <h2 id="search-title-el">Search graves</h2>
+      <p id="search-sub-el">Find anyone across all registered cemeteries</p>
     </div>
     <div class="search-bar">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -179,27 +270,27 @@
     <div id="search-results"></div>
     <div class="search-empty" id="search-empty">
       <div style="font-size:2rem;margin-bottom:.5rem">☽</div>
-      <p>Enter a name to search across all cemeteries.</p>
+      <p id="search-empty-p">Enter a name to search across all cemeteries.</p>
     </div>
   </div>
 
   <!-- CEMETERIES PANEL -->
   <div class="view-panel hidden" id="panel-cemeteries">
     <div class="vp-header">
-      <h2>All cemeteries</h2>
-      <p>Registered cemeteries on GraveMap</p>
+      <h2 id="cems-title-el">All cemeteries</h2>
+      <p id="cems-sub-el">Registered cemeteries on GraveMap</p>
     </div>
     <div id="cem-cards-list"></div>
 
     <!-- Admin: add cemetery directly -->
     <div class="req-section admin-only hidden" id="req-section-admin">
-      <div class="req-section-title">Manage cemeteries</div>
+      <div class="req-section-title" id="req-title-admin-el">Manage cemeteries</div>
       <button class="btn-primary" onclick="openOverlay('ov-add-cem')">+ Add cemetery</button>
     </div>
 
     <!-- Public: request a cemetery (hidden for admins) -->
     <div class="req-section" id="req-section-public">
-      <div class="req-section-title">Don't see your cemetery?</div>
+      <div class="req-section-title" id="req-title-el">Don't see your cemetery?</div>
       <button class="btn-outline" id="btn-req-cemetery">+ Request to add a cemetery</button>
     </div>
   </div>
@@ -215,10 +306,12 @@
       <button class="atab" data-atab="requests">Requests <span class="req-badge" id="req-badge"
           style="display:none"></span></button>
       <button class="atab" data-atab="cemeteries-admin">Cemeteries</button>
+      <button class="atab" data-atab="admins">Admins</button>
     </div>
     <div id="atab-graves" class="atab-content"></div>
     <div id="atab-requests" class="atab-content hidden"></div>
     <div id="atab-cemeteries-admin" class="atab-content hidden"></div>
+    <div id="atab-admins" class="atab-content hidden"></div>
   </div>
 
   <!-- ═══════════════════════════════════════

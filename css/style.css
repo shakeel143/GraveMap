@@ -1631,3 +1631,124 @@ body {
     text-align: center;
   }
 }
+
+/* ═══ RTL LAYOUT OVERRIDES (Urdu Mode) ═══ */
+html[dir="rtl"] body {
+  text-align: right;
+}
+
+html[dir="rtl"] .topbar {
+  flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .topbar-brand {
+  flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .topbar-nav {
+  flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .topbar-auth {
+  flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .panel-left {
+  left: auto;
+  right: 12px;
+}
+
+html[dir="rtl"] .float-tools {
+  right: auto;
+  left: 12px;
+}
+
+html[dir="rtl"] .modal-x {
+  left: 1.5rem;
+  right: auto;
+}
+
+html[dir="rtl"] .req-section-title {
+  text-align: right;
+}
+
+html[dir="rtl"] .field label {
+  text-align: right;
+  display: block;
+}
+
+html[dir="rtl"] .wpage-title {
+  text-align: right;
+}
+
+html[dir="rtl"] .wpage-hint {
+  text-align: right;
+}
+
+html[dir="rtl"] .gd-avatar {
+  margin-right: 0;
+  margin-left: 1rem;
+}
+
+html[dir="rtl"] .gd-hero {
+  flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .gd-item label {
+  text-align: right;
+}
+
+html[dir="rtl"] .gd-item p {
+  text-align: right;
+}
+
+html[dir="rtl"] .gd-bio {
+  text-align: right;
+  border-left: none;
+  border-right: 3px solid var(--accent);
+  padding-left: 0;
+  padding-right: 1rem;
+}
+
+html[dir="rtl"] .gd-actions {
+  flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .result-card {
+  text-align: right;
+}
+
+html[dir="rtl"] .rc-meta {
+  flex-direction: row-reverse;
+  justify-content: flex-start;
+}
+
+html[dir="rtl"] .cem-card {
+  text-align: right;
+}
+
+html[dir="rtl"] .cem-card-row {
+  flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .cem-mini-stats {
+  flex-direction: row-reverse;
+}
+
+html[dir="rtl"] .toast {
+  left: auto;
+  right: 50%;
+  transform: translateX(50%) translateY(60px);
+}
+
+html[dir="rtl"] .toast.show {
+  transform: translateX(50%) translateY(0);
+}
+
+/* Bottom sheet slide override for mobile RTL */
+@media (max-width: 768px) {
+  html[dir="rtl"] .float-panel.panel-left {
+    left: 0;
+    right: 0;
+  }
+}
