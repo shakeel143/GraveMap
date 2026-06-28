@@ -562,7 +562,7 @@ function initBoundaryMap() {
         S.boundaryMap.fitBounds(S.boundaryDrawn.getBounds(), { padding: [20, 20] });
         document.getElementById('boundary-status').textContent = `✓ Boundary loaded with ${coords.length} points.`;
         document.getElementById('boundary-status').className = 'boundary-status ok';
-      } catch (e) {}
+      } catch (e) { }
     }
     return;
   }
@@ -583,7 +583,7 @@ function initBoundaryMap() {
       const status = document.getElementById('boundary-status');
       status.textContent = `✓ Boundary loaded with ${coords.length} points.`;
       status.className = 'boundary-status ok';
-    } catch (e) {}
+    } catch (e) { }
   }
 
   S.boundaryMap.pm.addControls({
@@ -1381,7 +1381,7 @@ function toast(msg, type = '') {
 // ═══════════════════════════
 //  WIZARD INPUT UTILITIES
 // ═══════════════════════════
-window.fillGraveWizardFields = function(d) {
+window.fillGraveWizardFields = function (d) {
   document.getElementById('gw-name').value = d.name || '';
   document.getElementById('gw-father').value = d.fatherName || '';
   document.getElementById('gw-gender').value = d.gender || '';
@@ -1397,11 +1397,11 @@ window.fillGraveWizardFields = function(d) {
   document.getElementById('gw-photo').value = d.photoUrl || '';
 };
 
-window.clearGraveWizardFields = function() {
+window.clearGraveWizardFields = function () {
   fillGraveWizardFields({});
 };
 
-window.fillCemWizardFields = function(d) {
+window.fillCemWizardFields = function (d) {
   document.getElementById('cw-name').value = d.name || '';
   document.getElementById('cw-country').value = d.country || '';
   document.getElementById('cw-province').value = d.province || '';
@@ -1413,7 +1413,7 @@ window.fillCemWizardFields = function(d) {
   document.getElementById('cw-lng').value = d.centerLng || d.longitude || '';
 };
 
-window.clearCemWizardFields = function() {
+window.clearCemWizardFields = function () {
   fillCemWizardFields({});
   if (S.locateMarker && S.locateMap) { S.locateMap.removeLayer(S.locateMarker); S.locateMarker = null; }
   if (S.boundaryDrawn && S.boundaryMap) { S.boundaryMap.removeLayer(S.boundaryDrawn); S.boundaryDrawn = null; }
@@ -1718,9 +1718,9 @@ function renderAdminAdmins() {
         </thead>
         <tbody>
           ${admins.map(([uid, a]) => {
-            const date = a.addedAt ? new Date(a.addedAt).toLocaleDateString() : '–';
-            const isSelf = window.__user && window.__user.uid === uid;
-            return `<tr>
+    const date = a.addedAt ? new Date(a.addedAt).toLocaleDateString() : '–';
+    const isSelf = window.__user && window.__user.uid === uid;
+    return `<tr>
               <td><b>${esc(a.name || 'Admin')}</b> ${isSelf ? ' <span style="font-size:.7rem;color:var(--accent)">(You)</span>' : ''}</td>
               <td>${esc(a.email || '–')}</td>
               <td style="font-family:monospace;font-size:.72rem">${esc(uid)}</td>
@@ -1729,7 +1729,7 @@ function renderAdminAdmins() {
                 <button class="ibt" onclick="deleteAdmin('${uid}')" title="Remove Admin" style="color:var(--occupied)">🗑</button>
               </td>
             </tr>`;
-          }).join('')}
+  }).join('')}
         </tbody>
       </table>
     </div>
@@ -1901,18 +1901,18 @@ const TR = {
   }
 };
 
-window.toggleLanguage = function() {
+window.toggleLanguage = function () {
   S.lang = S.lang === 'en' ? 'ur' : 'en';
   localStorage.setItem('gravemap_lang', S.lang);
   applyLanguage();
 };
 
-window.applyLanguage = function() {
+window.applyLanguage = function () {
   const lang = S.lang;
   const t = TR[lang];
   document.documentElement.dir = lang === 'ur' ? 'rtl' : 'ltr';
   document.documentElement.lang = lang;
-  
+
   const btn = document.getElementById('btn-lang');
   if (btn) btn.innerHTML = lang === 'en' ? '🌐 اردو' : '🌐 English';
 
@@ -1976,11 +1976,11 @@ window.applyLanguage = function() {
 //  FAMILY TREE LINKING
 // ═══════════════════════════
 const RELATIONS = [
-  { value: 'spouse',  label: '💍 Spouse' },
-  { value: 'parent',  label: '👴 Parent' },
-  { value: 'child',   label: '👶 Child' },
+  { value: 'spouse', label: '💍 Spouse' },
+  { value: 'parent', label: '👴 Parent' },
+  { value: 'child', label: '👶 Child' },
   { value: 'sibling', label: '🤝 Sibling' },
-  { value: 'other',   label: '🔗 Other' },
+  { value: 'other', label: '🔗 Other' },
 ];
 
 // Opposite relation for bidirectional linking
@@ -2032,7 +2032,7 @@ function renderFamilySection(gid, isAdmin) {
   `;
 }
 
-window.toggleFamilySearch = function(gid) {
+window.toggleFamilySearch = function (gid) {
   const box = document.getElementById(`family-search-box-${gid}`);
   if (!box) return;
   const isHidden = box.style.display === 'none';
@@ -2040,7 +2040,7 @@ window.toggleFamilySearch = function(gid) {
   if (isHidden) document.getElementById(`family-search-input-${gid}`)?.focus();
 };
 
-window.familySearchInput = function(gid, query) {
+window.familySearchInput = function (gid, query) {
   const results = document.getElementById(`family-search-results-${gid}`);
   if (!results) return;
   const q = query.trim().toLowerCase();
@@ -2074,7 +2074,7 @@ window.familySearchInput = function(gid, query) {
   }).join('');
 };
 
-window.linkRelative = async function(gid, relId) {
+window.linkRelative = async function (gid, relId) {
   const relSelect = document.getElementById(`family-rel-select-${gid}`);
   const relation = relSelect ? relSelect.value : 'other';
   const opposite = OPPOSITE[relation] || 'other';
@@ -2088,12 +2088,12 @@ window.linkRelative = async function(gid, relId) {
     // Refresh family section in the open detail view
     const section = document.getElementById('gd-family-section');
     if (section) section.innerHTML = renderFamilySection(gid, true);
-  } catch(err) {
+  } catch (err) {
     toast('Error: ' + err.message, 'err');
   }
 };
 
-window.unlinkRelative = async function(gid, relId) {
+window.unlinkRelative = async function (gid, relId) {
   if (!confirm('Remove this family link?')) return;
   try {
     // Remove both sides
@@ -2103,7 +2103,7 @@ window.unlinkRelative = async function(gid, relId) {
 
     const section = document.getElementById('gd-family-section');
     if (section) section.innerHTML = renderFamilySection(gid, true);
-  } catch(err) {
+  } catch (err) {
     toast('Error: ' + err.message, 'err');
   }
 };
@@ -2117,9 +2117,9 @@ function renderAdminAnalytics() {
 
   const graves = Object.values(S.graves);
   const occupied = graves.filter(g => g.status === 'occupied').length;
-  const empty    = graves.filter(g => g.status === 'empty').length;
+  const empty = graves.filter(g => g.status === 'empty').length;
   const reserved = graves.filter(g => g.status === 'reserved').length;
-  const total    = graves.length || 1;
+  const total = graves.length || 1;
 
   // Per-cemetery stats
   const cemStats = Object.entries(S.cemeteries).map(([cid, c]) => {
@@ -2150,13 +2150,13 @@ function renderAdminAnalytics() {
       <div class="analytics-section" style="flex:2;min-width:0">
         <div class="analytics-title">Occupancy by Cemetery</div>
         ${cemStats.length === 0
-          ? '<p style="font-size:.83rem;color:var(--text-mid)">No cemetery data yet.</p>'
-          : `<div class="analytics-bars">
+      ? '<p style="font-size:.83rem;color:var(--text-mid)">No cemetery data yet.</p>'
+      : `<div class="analytics-bars">
               ${cemStats.map(c => {
-                const occPct  = c.total ? Math.round(c.occ  / c.total * 100) : 0;
-                const resPct  = c.total ? Math.round(c.res  / c.total * 100) : 0;
-                const empPct  = c.total ? Math.round(c.emp  / c.total * 100) : 0;
-                return `
+        const occPct = c.total ? Math.round(c.occ / c.total * 100) : 0;
+        const resPct = c.total ? Math.round(c.res / c.total * 100) : 0;
+        const empPct = c.total ? Math.round(c.emp / c.total * 100) : 0;
+        return `
                   <div class="analytics-bar-row">
                     <div class="analytics-bar-label" title="${esc(c.name)}">${esc(c.name)}</div>
                     <div class="analytics-bar-track">
@@ -2166,9 +2166,9 @@ function renderAdminAnalytics() {
                     </div>
                     <div class="analytics-bar-pct">${occPct}%</div>
                   </div>`;
-              }).join('')}
+      }).join('')}
             </div>`
-        }
+    }
       </div>
     </div>
   `;
@@ -2181,7 +2181,7 @@ function renderAdminAnalytics() {
     const cx = 100, cy = 100, r = 80, inner = 50;
     const slices = [
       { value: occupied, color: '#E05A5A' },
-      { value: empty,    color: '#2ECC8A' },
+      { value: empty, color: '#2ECC8A' },
       { value: reserved, color: '#F0B429' },
     ].filter(s => s.value > 0);
 
@@ -2230,7 +2230,7 @@ function renderAdminAnalytics() {
 // ═══════════════════════════════════════
 // ⚠️  VAPID_KEY: Replace with your project's Web Push Certificate key
 //     from Firebase Console → Project Settings → Cloud Messaging → Web Push certificates
-const FCM_VAPID_KEY = 'YOUR_VAPID_PUBLIC_KEY_HERE';
+const FCM_VAPID_KEY = 'BDLNExW-j4sR5l3axi2dqM8hYg6-7j6CoMBM6PsSU_V5LAq5sX555av7357-fJFeMXWwabDtWlD6YI32SMRghcg';
 
 async function initFCMNotifications(user) {
   const { messaging, getToken, onMessage } = fb();
@@ -2260,7 +2260,7 @@ async function initFCMNotifications(user) {
         vapidKey: FCM_VAPID_KEY,
         serviceWorkerRegistration: swReg
       });
-    } catch(e) {
+    } catch (e) {
       // VAPID key not configured yet — show guidance banner
       if (FCM_VAPID_KEY === 'YOUR_VAPID_PUBLIC_KEY_HERE') {
         console.warn('[FCM] VAPID key not configured. Set FCM_VAPID_KEY in app.js.');
@@ -2286,11 +2286,11 @@ async function initFCMNotifications(user) {
     window.__fcmUnsub = onMessage(messaging, payload => {
       console.log('[FCM] Foreground message:', payload);
       const title = payload.notification?.title || 'GraveMap';
-      const body  = payload.notification?.body  || '';
+      const body = payload.notification?.body || '';
       showFCMToast(title, body, payload.data);
     });
 
-  } catch(err) {
+  } catch (err) {
     console.warn('[FCM] Init error:', err);
   }
 }
@@ -2341,4 +2341,4 @@ waitFB(() => {
   checkDeepLink();
   switchView('map');
 });
-
+
