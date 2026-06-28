@@ -161,11 +161,16 @@ document.addEventListener('authChanged', e => {
     document.getElementById('u-name').textContent = user.displayName?.split(' ')[0] || 'Admin';
     // Enable draw tools on map
     enableDrawTools();
+    // Initialize FCM push notifications for admin
+    setTimeout(() => initFCMNotifications(user), 800);
   } else {
     document.getElementById('btn-login').classList.remove('hidden');
     document.getElementById('user-chip').classList.add('hidden');
+    // Clean up FCM foreground listener
+    if (window.__fcmUnsub) { window.__fcmUnsub(); window.__fcmUnsub = null; }
   }
 });
+
 
 document.getElementById('btn-login').addEventListener('click', async () => {
   const { auth, prov, signInWithPopup } = fb();
@@ -2220,6 +2225,112 @@ function renderAdminAnalytics() {
   }, 50);
 }
 
+// ═══════════════════════════════════════
+//  FCM PUSH NOTIFICATIONS
+// ═══════════════════════════════════════
+// ⚠️  VAPID_KEY: Replace with your project's Web Push Certificate key
+//     from Firebase Console → Project Settings → Cloud Messaging → Web Push certificates
+const FCM_VAPID_KEY = 'YOUR_VAPID_PUBLIC_KEY_HERE';
+
+async function initFCMNotifications(user) {
+  const { messaging, getToken, onMessage } = fb();
+  if (!messaging) {
+    console.log('[FCM] Messaging not available (no SW support).');
+    return;
+  }
+
+  // Only prompt once per session
+  if (window.__fcmInitialized) return;
+  window.__fcmInitialized = true;
+
+  try {
+    // Check / request browser notification permission
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      console.log('[FCM] Notification permission denied.');
+      showFCMBanner('denied');
+      return;
+    }
+
+    // Get FCM registration token
+    const swReg = await navigator.serviceWorker.ready;
+    let token;
+    try {
+      token = await getToken(messaging, {
+        vapidKey: FCM_VAPID_KEY,
+        serviceWorkerRegistration: swReg
+      });
+    } catch(e) {
+      // VAPID key not configured yet — show guidance banner
+      if (FCM_VAPID_KEY === 'YOUR_VAPID_PUBLIC_KEY_HERE') {
+        console.warn('[FCM] VAPID key not configured. Set FCM_VAPID_KEY in app.js.');
+        showFCMBanner('vapid-missing');
+        return;
+      }
+      throw e;
+    }
+
+    if (token) {
+      // Store token in Firebase so Cloud Functions can target this admin
+      await dbUpdate(`fcmTokens/${user.uid}`, {
+        token,
+        uid: user.uid,
+        email: user.email || '',
+        updatedAt: Date.now()
+      });
+      console.log('[FCM] Token registered:', token.substring(0, 20) + '...');
+      showFCMBanner('enabled');
+    }
+
+    // Foreground message handler — show in-app notification
+    window.__fcmUnsub = onMessage(messaging, payload => {
+      console.log('[FCM] Foreground message:', payload);
+      const title = payload.notification?.title || 'GraveMap';
+      const body  = payload.notification?.body  || '';
+      showFCMToast(title, body, payload.data);
+    });
+
+  } catch(err) {
+    console.warn('[FCM] Init error:', err);
+  }
+}
+
+function showFCMBanner(state) {
+  // Only show banners for meaningful states, don't spam
+  if (state === 'enabled') {
+    toast('🔔 Push notifications enabled', 'ok');
+  } else if (state === 'vapid-missing') {
+    // Admin dev hint — only visible in console + subtle UI indicator
+    const hint = document.getElementById('fcm-setup-hint');
+    if (hint) hint.style.display = 'block';
+  }
+}
+
+function showFCMToast(title, body, data) {
+  const container = document.createElement('div');
+  container.className = 'fcm-toast';
+  container.innerHTML = `
+    <div class="fcm-toast-icon">🔔</div>
+    <div class="fcm-toast-content">
+      <div class="fcm-toast-title">${esc(title)}</div>
+      ${body ? `<div class="fcm-toast-body">${esc(body)}</div>` : ''}
+    </div>
+    <button class="fcm-toast-close" onclick="this.parentElement.remove()">✕</button>
+  `;
+  // If there's a link in data, make the card clickable
+  if (data?.url) {
+    container.style.cursor = 'pointer';
+    container.addEventListener('click', e => {
+      if (e.target.classList.contains('fcm-toast-close')) return;
+      window.location.hash = data.url.replace(location.origin + location.pathname, '');
+      container.remove();
+    });
+  }
+  document.body.appendChild(container);
+  // Auto-remove after 6 seconds
+  setTimeout(() => container.remove(), 6000);
+}
+
 // ═══════════════════════════
 //  INIT
 // ═══════════════════════════
@@ -2229,4 +2340,5 @@ waitFB(() => {
   applyLanguage();
   checkDeepLink();
   switchView('map');
-});
+});
+

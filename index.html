@@ -51,6 +51,7 @@
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
     import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
     import { getDatabase, ref, set, get, push, remove, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+    import { getMessaging, getToken, onMessage } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js";
 
     // ── FIREBASE CONFIG ────────────────────────────────────────────────
 
@@ -71,9 +72,20 @@
     const db = getDatabase(app);
     const prov = new GoogleAuthProvider();
 
+    // FCM — only init if browser supports service workers
+    let messaging = null;
+    try {
+      if ('serviceWorker' in navigator) {
+        messaging = getMessaging(app);
+      }
+    } catch(e) {
+      console.warn('[FCM] Messaging init failed:', e);
+    }
+
     window.__fb = {
       auth, db, ref, set, get, push, remove, onValue, update,
-      signInWithPopup, signOut, onAuthStateChanged, prov
+      signInWithPopup, signOut, onAuthStateChanged, prov,
+      messaging, getToken, onMessage
     };
 
     onAuthStateChanged(auth, async user => {

@@ -201,13 +201,13 @@ GraveMap/
 - [x] Escape key closes modals
 - [x] Full mobile responsive layout
 
-### 🔜 Phase 5 — Planned
-- [ ] Multi-admin management (add/remove admin UIDs from dashboard)
-- [ ] Urdu / RTL language support
-- [ ] PWA / offline mode (service worker)
-- [ ] Family tree linking between related graves
-- [ ] FCM push notifications for new requests
-- [ ] Occupancy analytics charts
+### ✅ Phase 5 — Advanced
+- [x] Multi-admin management (add/remove admin UIDs from dashboard)
+- [x] Urdu / RTL language support
+- [x] PWA / offline mode (service worker + manifest.json)
+- [x] Family tree linking between related graves (bidirectional, with admin search UI)
+- [x] FCM push notifications for new requests (foreground + background, VAPID-ready)
+- [x] Occupancy analytics charts (donut + per-cemetery stacked bar chart)
 
 ---
 

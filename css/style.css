@@ -1968,4 +1968,73 @@ html[dir="rtl"] .analytics-donut-wrap { flex-direction: row-reverse; }
 html[dir="rtl"] .analytics-bar-label  { text-align: right; }
 html[dir="rtl"] .analytics-bar-row    { flex-direction: row-reverse; }
 html[dir="rtl"] .analytics-bar-pct    { text-align: left; }
+
+/* ═══ FCM PUSH NOTIFICATION TOAST ═══ */
+.fcm-toast {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 99990;
+  background: #1C2333;
+  border: 1px solid rgba(46, 204, 138, .3);
+  border-radius: 12px;
+  padding: .85rem 1.1rem;
+  display: flex;
+  align-items: flex-start;
+  gap: .75rem;
+  max-width: 340px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .5);
+  animation: fcm-slide-in .3s cubic-bezier(.175,.885,.32,1.275) forwards;
+  font-family: 'Outfit', sans-serif;
+}
+
+@keyframes fcm-slide-in {
+  from { opacity: 0; transform: translateX(40px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.fcm-toast-icon {
+  font-size: 1.3rem;
+  flex-shrink: 0;
+  margin-top: .05rem;
+}
+
+.fcm-toast-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.fcm-toast-title {
+  font-size: .85rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: .2rem;
+}
+
+.fcm-toast-body {
+  font-size: .78rem;
+  color: #9CA3AF;
+  line-height: 1.4;
+}
+
+.fcm-toast-close {
+  background: transparent;
+  border: none;
+  color: #6B7280;
+  cursor: pointer;
+  font-size: .9rem;
+  padding: 0 .15rem;
+  flex-shrink: 0;
+  transition: color .15s;
+}
+
+.fcm-toast-close:hover {
+  color: #fff;
+}
+
+html[dir="rtl"] .fcm-toast {
+  right: auto;
+  left: 1.5rem;
+  flex-direction: row-reverse;
+}
 
