@@ -8,6 +8,7 @@
   <link rel="icon" type="image/png" href="favicon.png" />
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#2ECC8A" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="GraveMap" />
@@ -93,21 +94,31 @@
         try {
           const adminSnap = await get(ref(db, `admins/${user.uid}`));
           if (adminSnap.exists()) {
-            window.__user = user || null;
+            // ✅ Confirmed admin
+            window.__user = user;
             document.dispatchEvent(new CustomEvent('authChanged', { detail: user }));
           } else {
-            // Self-bootstrapping: if database has zero admins, make first user admin automatically
-            const allAdminsSnap = await get(ref(db, 'admins'));
-            if (!allAdminsSnap.exists() || Object.keys(allAdminsSnap.val() || {}).length === 0) {
+            // Not in admins — check if ANY admins exist (self-bootstrap check)
+            let allAdminsSnap = null;
+            try {
+              allAdminsSnap = await get(ref(db, 'admins'));
+            } catch(rulesErr) {
+              // If rules block reading the whole admins/ node, that means
+              // admins already exist — user is unauthorized
+              console.warn('Cannot read admins/ node (rules restrict it). Treating as unauthorized.');
+            }
+
+            if (allAdminsSnap !== null && (!allAdminsSnap.exists() || Object.keys(allAdminsSnap.val() || {}).length === 0)) {
+              // Zero admins in DB → self-bootstrap: make this user the first admin
               await set(ref(db, `admins/${user.uid}`), {
                 email: user.email,
                 name: user.displayName || 'Primary Admin',
                 addedAt: Date.now()
               });
-              window.__user = user || null;
+              window.__user = user;
               document.dispatchEvent(new CustomEvent('authChanged', { detail: user }));
             } else {
-              // Unauthorized user
+              // Unauthorized
               await signOut(auth);
               window.__user = null;
               document.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
@@ -115,9 +126,28 @@
             }
           }
         } catch (e) {
-          console.error("Auth check failed:", e);
-          window.__user = null;
-          document.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
+          // ── Permission denied on admins/${uid} ──────────────────────────
+          // This means Firebase rules block unauthenticated/unauthorized reads.
+          // FIX: Add this rule in Firebase Console → Realtime Database → Rules:
+          //
+          //   "admins": {
+          //     "$uid": {
+          //       ".read": "auth != null && auth.uid == $uid"
+          //     }
+          //   }
+          //
+          if (e.message && e.message.toLowerCase().includes('permission')) {
+            console.warn('[Auth] Permission denied reading admins node.\n⚠️  Update your Firebase Realtime Database rules to allow authenticated users to read their own admin entry.\nSee: https://console.firebase.google.com → Realtime Database → Rules');
+            // Still sign out — user is not a verified admin
+            await signOut(auth).catch(() => {});
+            window.__user = null;
+            document.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
+            document.dispatchEvent(new CustomEvent('authUnauthorized', { detail: user.uid }));
+          } else {
+            console.error('Auth check failed:', e);
+            window.__user = null;
+            document.dispatchEvent(new CustomEvent('authChanged', { detail: null }));
+          }
         }
       } else {
         window.__user = null;
@@ -130,7 +160,7 @@
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').then(reg => {
+        navigator.serviceWorker.register('./sw.js').then(reg => {
           console.log('[PWA] Service worker registered:', reg.scope);
 
           // Detect new SW waiting — show update toast
