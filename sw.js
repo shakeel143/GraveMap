@@ -11,12 +11,12 @@ const TILE_CACHE = 'gravemap-tiles-v1';
 
 // Core app shell assets to precache on install
 const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/css/style.css',
-  '/js/app.js',
-  '/manifest.json',
-  '/favicon.png',
+  './',
+  'index.html',
+  'css/style.css',
+  'js/app.js',
+  'manifest.json',
+  'favicon.png',
   // Leaflet
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
