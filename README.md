@@ -99,6 +99,9 @@ Firebase Realtime Database
 │       ├── photoUrl          ← external image URL (no storage cost)
 │       ├── polygon           ← JSON rectangle coordinates
 │       ├── lat, lng          ← grave center coordinates
+│       ├── relatives/        ← [NEW] Bidirectional family tree relations
+│       │   └── {relativeGraveId}
+│       │       └── relation  ← "spouse" | "parent" | "child" | "sibling" | "other"
 │       └── createdAt
 │
 ├── requests/
@@ -107,8 +110,17 @@ Firebase Realtime Database
 │       ├── resolved          ← boolean
 │       └── ...fields
 │
-└── admins/
-    └── {uid}: true
+├── admins/                   ← [NEW] Managed list of Google UIDs
+│   └── {uid}/
+│       ├── email
+│       ├── name
+│       └── addedAt
+│
+└── fcmTokens/                ← [NEW] Registered FCM tokens for admins
+    └── {uid}/
+        ├── token
+        ├── email
+        └── updatedAt
 ```
 
 ---
@@ -133,10 +145,49 @@ python -m http.server 8000
 
 ### Firebase Setup (for your own instance)
 
-1. Create a project at [console.firebase.google.com](https://console.firebase.google.com)
-2. Enable **Realtime Database** and **Authentication → Google provider**
-3. Replace the `firebaseConfig` object in `index.html` with your own credentials
-4. Set Realtime Database rules to allow authenticated writes and public reads
+1. Create a project at [console.firebase.google.com](https://console.firebase.google.com).
+2. Enable **Realtime Database** and **Authentication → Google provider**.
+3. Replace the `firebaseConfig` object in `index.html` with your own credentials.
+4. Set the Realtime Database **Rules** to the following configuration (necessary for PWA, FCM, and multi-admin bootstrapping):
+
+```json
+{
+  "rules": {
+    "cemeteries": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "graves": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "deceased": {
+      ".read": true,
+      ".write": "auth != null"
+    },
+    "requests": {
+      ".read": "auth != null",
+      ".write": true
+    },
+    "notifications": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "admins": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && (!root.child('admins').exists() || root.child('admins').child(auth.uid).exists())"
+      }
+    },
+    "fcmTokens": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.uid == $uid"
+      }
+    }
+  }
+}
+```
 
 ---
 
@@ -144,23 +195,16 @@ python -m http.server 8000
 
 ```
 GraveMap/
-├── index.html        # Single-page app — all HTML structure
+├── index.html                # Single-page app — HTML, head meta scripts, and SW init
 ├── css/
-│   └── style.css     # All styles (dark topbar, panels, modals, responsive)
+│   └── style.css             # Main styling + RTL direction & family tree styles
 ├── js/
-│   └── app.js        # All application logic (~1,500 lines)
-│       ├── Firebase helpers
-│       ├── Map initialization (Leaflet + Geoman)
-│       ├── Auth & navigation
-│       ├── Cemetery wizard (3-step)
-│       ├── Grave wizard (3-step)
-│       ├── Generate Grave Grid
-│       ├── Search
-│       ├── Grave detail modal
-│       ├── Print grave card
-│       ├── CSV import (inline parser)
-│       ├── Admin dashboard
-│       └── Deep link handler (#grave-ID)
+│   └── app.js                # Main logic (Leaflet, wizards, language translation, family links, charts, FCM)
+├── sw.js                     # PWA Service Worker (App shell caching + offline map strategies)
+├── manifest.json             # Web App Manifest for mobile installation/PWA compliance
+├── firebase-messaging-sw.js  # FCM Service Worker for handling background notifications
+├── favicon.png               # Main app icon
+├── og-cover.png              # Cover image for social share previews
 └── README.md
 ```
 
